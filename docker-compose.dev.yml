@@ -1,0 +1,65 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: builder # Use the stage with all dependencies
+    working_dir: /repo/apps/backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/backend:/repo/apps/backend
+      - ./packages/shared:/repo/packages/shared
+      - /repo/apps/backend/node_modules
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USERNAME=root
+      - DB_PASSWORD=rootpassword
+      - DB_DATABASE=hungviet_smarthome
+    # with watch mode
+    command: npm run start:dev
+    # without watch mode
+    # command: npm run start
+    depends_on:
+      - db
+    restart: always
+
+  db:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    command: --default-authentication-plugin=mysql_native_password
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: hungviet_smarthome
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+    restart: always
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: builder
+    working_dir: /repo/apps/frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/frontend:/repo/apps/frontend
+      - ./packages/shared:/repo/packages/shared
+      - ./apps/frontend/public/shared:/repo/apps/frontend/public/shared
+      - /repo/apps/frontend/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL=http://localhost:3001
+      - REACT_APP_PANEL_PREFIX=x-panel-5661
+      - REACT_APP_AUTH_TOKEN_KEY=analyze_data_agent_auth
+      - REACT_APP_AUTH_USER_KEY=analyze_data_agent_user
+      - TSC_COMPILE_ON_ERROR=true
+    command: npm start
+    depends_on:
+      - db
+      - backend
+    restart: always

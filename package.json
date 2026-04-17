@@ -1,0 +1,10 @@
+{
+  "name": "sync-project",
+  "private": true,
+  "scripts": {
+    "build:shared": "npm run build --prefix packages/shared",
+    "build:backend": "npm run build:shared && npm run build --prefix apps/backend",
+    "build:frontend": "npm run build:shared && npm run build --prefix apps/frontend",
+    "build": "npm run build:shared && npm run build --prefix apps/backend && npm run build --prefix apps/frontend"
+  }
+}

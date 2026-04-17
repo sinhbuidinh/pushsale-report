@@ -1,0 +1,70 @@
+{
+  "productsShowcaseTitle": "Products Showcase",
+  "sliderPrev": "Previous",
+  "sliderNext": "Next",
+  "navBrand": "Hung Viet Smart Home",
+  "heroKicker": "INNOVATION & TECHNOLOGY",
+  "heroTitle": "Future of Smart Living",
+  "heroSubtitle": "We provide comprehensive smart home solutions for a modern and secure lifestyle.",
+  "ctaDiscover": "Discover More",
+  "statsHeading": "Quick Facts",
+  "statFounded": "Founded",
+  "statHQ": "Headquarters",
+  "statHQValue": "HCMC, VN",
+  "statTeam": "Team Size",
+  "statTeamValue": "50+ Members",
+  "statField": "Industry",
+  "statFieldShort": "Smart Home",
+  "aboutTitle": "About Us",
+  "aboutBody": "Hung Viet Smart Home is a pioneer in bringing advanced technology to every household.",
+  "aboutBody2": "Our team of experts works tirelessly to ensure your home is secure, efficient, and intelligent.",
+  "productsTitle": "Our Solutions",
+  "productsShowcaseIntro": "Explore our wide range of smart devices and integrated systems.",
+  "visionTitle": "Our Vision",
+  "visionBody": "To become the leading smart home provider in Southeast Asia.",
+  "missionTitle": "Our Mission",
+  "mission1": "Innovate constantly",
+  "mission2": "Prioritize customer security",
+  "mission3": "Build sustainable partnerships",
+  "mission4": "Deliver excellence",
+  "directionsTitle": "Strategic Directions",
+  "directionsBody": "Focusing on AI integration and energy-efficient automation.",
+  "valuesTitle": "Core Values",
+  "values": {
+    "quality": {
+      "title": "Quality",
+      "body": "Uncompromising standards in every product."
+    },
+    "customer": {
+      "title": "Customer First",
+      "body": "Dedicated support and personalized solutions."
+    },
+    "innovation": {
+      "title": "Innovation",
+      "body": "Staying ahead of technological trends."
+    },
+    "trust": {
+      "title": "Trust",
+      "body": "Building long-term reliability."
+    },
+    "partnership": {
+      "title": "Partnership",
+      "body": "Collaborating for mutual growth."
+    }
+  },
+  "footerCompany": "Hung Viet Smart Home Co., Ltd.",
+  "footerAddress": "123 Smart St, District 1, HCMC",
+  "footerTax": "Tax ID: 0123456789",
+  "footerPhone": "Phone: +84 123 456 789",
+  "footerEmail": "Email: contact@hungvietsmarthome.com",
+  "footerNote": "Leading Smart Home Provider",
+  "productItems": {
+    "lighting": "Smart Lighting",
+    "security": "Security Systems",
+    "lock": "Smart Locks",
+    "curtain": "Curtain Automation",
+    "audio": "Multi-room Audio",
+    "appliances": "Home Appliances",
+    "integration": "Full Integration"
+  }
+}

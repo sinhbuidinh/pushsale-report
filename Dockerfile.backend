@@ -1,0 +1,22 @@
+# Monorepo: backend depends on ../../packages/shared
+FROM node:23-alpine AS builder
+WORKDIR /repo
+
+COPY packages/shared/package.json packages/shared/tsconfig.json ./packages/shared/
+COPY packages/shared/src ./packages/shared/src
+RUN cd /repo/packages/shared && npm install && npm run build
+
+WORKDIR /repo/apps/backend
+COPY apps/backend/package*.json ./
+RUN npm install
+COPY apps/backend/ ./
+RUN npm run build
+
+FROM node:23-alpine
+WORKDIR /app
+COPY --from=builder /repo/apps/backend/package*.json ./
+RUN npm install --only=production --legacy-peer-deps
+COPY --from=builder /repo/apps/backend/dist ./dist
+ENV PORT=3001
+EXPOSE 3001
+CMD ["node", "dist/main"]

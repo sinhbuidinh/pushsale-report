@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend-data:/app/data
+    restart: always
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+      - REACT_APP_PANEL_PREFIX=x-panel-5661
+      - REACT_APP_AUTH_TOKEN_KEY=analyze_data_agent_auth
+      - REACT_APP_AUTH_USER_KEY=analyze_data_agent_user
+    depends_on:
+      - backend
+    restart: always

@@ -1,0 +1,70 @@
+{
+  "productsShowcaseTitle": "Trưng Bày Sản Phẩm",
+  "sliderPrev": "Trước",
+  "sliderNext": "Sau",
+  "navBrand": "Hùng Việt Smart Home",
+  "heroKicker": "ĐỔI MỚI & CÔNG NGHỆ",
+  "heroTitle": "Tương Lai Của Cuộc Sống Thông Minh",
+  "heroSubtitle": "Chúng tôi cung cấp các giải pháp nhà thông minh toàn diện cho lối sống hiện đại và an toàn.",
+  "ctaDiscover": "Khám Phá Ngay",
+  "statsHeading": "Thông Tin Nhanh",
+  "statFounded": "Thành lập",
+  "statHQ": "Trụ sở",
+  "statHQValue": "TP.HCM, VN",
+  "statTeam": "Nhân sự",
+  "statTeamValue": "50+ Thành viên",
+  "statField": "Lĩnh vực",
+  "statFieldShort": "Nhà Thông Minh",
+  "aboutTitle": "Về Chúng Tôi",
+  "aboutBody": "Hùng Việt Smart Home là đơn vị tiên phong trong việc mang công nghệ tiên tiến đến mọi gia đình.",
+  "aboutBody2": "Đội ngũ chuyên gia của chúng tôi làm việc không mệt mỏi để đảm bảo ngôi nhà của bạn an toàn, hiệu quả và thông minh.",
+  "productsTitle": "Giải Pháp Của Chúng Tôi",
+  "productsShowcaseIntro": "Khám phá các thiết bị thông minh và hệ thống tích hợp đa dạng.",
+  "visionTitle": "Tầm Nhìn",
+  "visionBody": "Trở thành nhà cung cấp giải pháp nhà thông minh hàng đầu tại Đông Nam Á.",
+  "missionTitle": "Sứ Mệnh",
+  "mission1": "Đổi mới không ngừng",
+  "mission2": "Ưu tiên an ninh khách hàng",
+  "mission3": "Xây dựng đối tác bền vững",
+  "mission4": "Mang lại sự xuất sắc",
+  "directionsTitle": "Định Hướng Chiến Lược",
+  "directionsBody": "Tập trung vào tích hợp AI và tự động hóa tiết kiệm năng lượng.",
+  "valuesTitle": "Giá Trị Cốt Lõi",
+  "values": {
+    "quality": {
+      "title": "Chất Lượng",
+      "body": "Tiêu chuẩn không thỏa hiệp trong mọi sản phẩm."
+    },
+    "customer": {
+      "title": "Khách Hàng Là Trọng Tâm",
+      "body": "Hỗ trợ tận tâm và giải pháp cá nhân hóa."
+    },
+    "innovation": {
+      "title": "Đổi Mới",
+      "body": "Luôn dẫn đầu các xu hướng công nghệ."
+    },
+    "trust": {
+      "title": "Tin Cậy",
+      "body": "Xây dựng sự tin cậy lâu dài."
+    },
+    "partnership": {
+      "title": "Hợp Tác",
+      "body": "Cùng hợp tác để cùng phát triển."
+    }
+  },
+  "footerCompany": "Công ty TNHH Hùng Việt Smart Home",
+  "footerAddress": "123 Đường Thông Minh, Quận 1, TP.HCM",
+  "footerTax": "MST: 0123456789",
+  "footerPhone": "SĐT: +84 123 456 789",
+  "footerEmail": "Email: contact@hungvietsmarthome.com",
+  "footerNote": "Nhà Cung Cấp Smart Home Hàng Đầu",
+  "productItems": {
+    "lighting": "Chiếu Sáng Thông Minh",
+    "security": "Hệ Thống An Ninh",
+    "lock": "Khóa Thông Minh",
+    "curtain": "Rèm Tự Động",
+    "audio": "Âm Thanh Đa Vùng",
+    "appliances": "Thiết Bị Gia Dụng",
+    "integration": "Tích Hợp Toàn Diện"
+  }
+}
