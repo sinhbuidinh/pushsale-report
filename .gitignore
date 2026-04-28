@@ -1,3 +1,5 @@
 node_modules/
 packages/shared/dist/
 mysql-data/
+apps/.DS_Store
+.DS_Store

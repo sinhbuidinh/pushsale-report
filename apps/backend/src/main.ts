@@ -8,6 +8,8 @@ async function bootstrap() {
     logger: new FileConsoleLogger(),
   });
   app.enableCors();
-  await app.listen(process.env.PORT ?? 3001);
+  const port = Number(process.env.PORT ?? 3001);
+  const host = process.env.HOST ?? '0.0.0.0';
+  await app.listen(port, host);
 }
 bootstrap();

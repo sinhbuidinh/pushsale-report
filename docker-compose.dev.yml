@@ -10,7 +10,8 @@ services:
     volumes:
       - ./apps/backend:/repo/apps/backend
       - ./packages/shared:/repo/packages/shared
-      - /repo/apps/backend/node_modules
+      - backend_node_modules:/repo/apps/backend/node_modules
+      - backend_shared_node_modules:/repo/packages/shared/node_modules
     environment:
       - NODE_ENV=development
       - DB_HOST=db
@@ -18,12 +19,18 @@ services:
       - DB_USERNAME=root
       - DB_PASSWORD=rootpassword
       - DB_DATABASE=hungviet_smarthome
-    # with watch mode
-    command: npm run start:dev
-    # without watch mode
-    # command: npm run start
+      # Reliable file watching with bind mounts (Docker Desktop Windows/macOS)
+      - CHOKIDAR_USEPOLLING=true
+    # Install & build shared (bind mount hides image-built dist/node_modules), then Nest watch
+    command:
+      [
+        "sh",
+        "-c",
+        "npm install --prefix /repo/packages/shared && npm run build --prefix /repo/packages/shared && npm run start:dev",
+      ]
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: always
 
   db:
@@ -36,6 +43,21 @@ services:
       MYSQL_DATABASE: hungviet_smarthome
     volumes:
       - ./mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-prootpassword",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
     restart: always
 
   frontend:
@@ -50,16 +72,34 @@ services:
       - ./apps/frontend:/repo/apps/frontend
       - ./packages/shared:/repo/packages/shared
       - ./apps/frontend/public/shared:/repo/apps/frontend/public/shared
-      - /repo/apps/frontend/node_modules
+      - frontend_node_modules:/repo/apps/frontend/node_modules
+      - frontend_shared_node_modules:/repo/packages/shared/node_modules
     environment:
+      # CRA must listen on all interfaces so host browser can reach the dev server (Docker Desktop).
+      - HOST=0.0.0.0
       - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
       - REACT_APP_API_URL=http://localhost:3001
       - REACT_APP_PANEL_PREFIX=x-panel-5661
       - REACT_APP_AUTH_TOKEN_KEY=analyze_data_agent_auth
       - REACT_APP_AUTH_USER_KEY=analyze_data_agent_user
       - TSC_COMPILE_ON_ERROR=true
-    command: npm start
+      - ESLINT_NO_DEV_ERRORS=true
+    command:
+      [
+        "sh",
+        "-c",
+        "npm install --prefix /repo/packages/shared && npm run build --prefix /repo/packages/shared && npm start",
+      ]
     depends_on:
-      - db
-      - backend
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
     restart: always
+
+volumes:
+  backend_node_modules:
+  frontend_node_modules:
+  backend_shared_node_modules:
+  frontend_shared_node_modules:
