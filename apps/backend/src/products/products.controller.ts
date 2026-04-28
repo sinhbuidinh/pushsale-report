@@ -1,16 +1,23 @@
-import { Controller, Get, UseGuards, Query } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
-import { Product } from './product.entity';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ProductsService } from './products.service';
 
 @Controller('products')
 @UseGuards(JwtAuthGuard)
 export class ProductsController {
-  constructor(
-    @InjectRepository(Product)
-    private productRepo: Repository<Product>,
-  ) {}
+  constructor(private readonly productsService: ProductsService) {}
 
   @Get()
   async findAll(
@@ -19,38 +26,93 @@ export class ProductsController {
     @Query('search') search: string = '',
   ) {
     try {
-      const where: any = {};
-      
-      if (search) {
-        where.item_code = Like(`%${search}%`);
-        // Note: For OR condition in TypeORM with findAndCount, 
-        // you usually pass an array to 'where'.
-      }
-
-      const [data, total] = await this.productRepo.findAndCount({
-        where: search ? [
-          { item_code: Like(`%${search}%`) },
-          { item_name: Like(`%${search}%`) }
-        ] : {},
-        take: limit,
-        skip: (page - 1) * limit,
-        order: { id: 'DESC' },
-      });
+      const { data, total } = await this.productsService.findProductListWithAdaptionsPage(
+        Number(page) || 1,
+        Number(limit) || 10,
+        search ?? '',
+      );
 
       return {
         status: true,
         data: {
           data,
           total,
-          page: Number(page),
-          limit: Number(limit),
+          page: Number(page) || 1,
+          limit: Number(limit) || 10,
         },
       };
     } catch (error) {
       return {
         status: false,
-        error: error.message,
+        error: (error as Error).message,
       };
+    }
+  }
+
+  @Post(':productId/adaptions')
+  async createFirstAdaption(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body()
+    body: {
+      start_date?: unknown;
+      end_date?: unknown;
+      cost_price?: unknown;
+      delivery_fee?: unknown;
+    },
+  ) {
+    const start_date = typeof body.start_date === 'string' ? body.start_date.trim() : '';
+    const end_date = typeof body.end_date === 'string' ? body.end_date.trim() : '';
+    const cost_price = Number(body.cost_price);
+    const delivery_fee = Number(body.delivery_fee);
+    if (!start_date || !end_date) {
+      throw new BadRequestException('start_date and end_date are required');
+    }
+    if (!Number.isFinite(cost_price) || cost_price < 0) {
+      throw new BadRequestException('cost_price must be a non-negative number');
+    }
+    if (!Number.isFinite(delivery_fee) || delivery_fee < 0) {
+      throw new BadRequestException('delivery_fee must be a non-negative number');
+    }
+    try {
+      const data = await this.productsService.createFirstAdaption(productId, {
+        start_date,
+        end_date,
+        cost_price,
+        delivery_fee,
+      });
+      return { status: true, data };
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        return { status: false, error: error.message };
+      }
+      return { status: false, error: (error as Error).message };
+    }
+  }
+
+  @Patch('adaptions/:adaptionId')
+  async patchAdaptionPrices(
+    @Param('adaptionId', ParseIntPipe) adaptionId: number,
+    @Body() body: { cost_price?: unknown; delivery_fee?: unknown },
+  ) {
+    const cost_price = Number(body.cost_price);
+    const delivery_fee = Number(body.delivery_fee);
+    if (!Number.isFinite(cost_price) || cost_price < 0) {
+      throw new BadRequestException('cost_price must be a non-negative number');
+    }
+    if (!Number.isFinite(delivery_fee) || delivery_fee < 0) {
+      throw new BadRequestException('delivery_fee must be a non-negative number');
+    }
+    try {
+      const data = await this.productsService.patchAdaptionPrices(adaptionId, {
+        cost_price,
+        delivery_fee,
+      });
+      return { status: true, data };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        return { status: false, error: error.message };
+      }
+      return { status: false, error: (error as Error).message };
     }
   }
 }

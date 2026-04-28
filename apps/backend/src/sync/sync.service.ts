@@ -11,7 +11,11 @@ import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
 import { PushSaleTypeDate, SyncStatus, SyncTriggerSource } from '@sync-project/shared';
-import { getAppTimeZone, yesterdayCalendarInZone } from '../common/app-timezone';
+import {
+  calendarMonthBoundsForDate,
+  getAppTimeZone,
+  yesterdayCalendarInZone,
+} from '../common/app-timezone';
 import { httpErrorMessage } from '../common/http-error.util';
 import { HttpRetryService } from '../common/http-retry.service';
 import { PUSHSALE_REQUEST_INTERVAL_MS } from '../common/pushsale-request-interval';
@@ -22,6 +26,12 @@ import { durationPartsFromMs, durationPartsSince } from '../common/duration-part
  */
 function cloneSyncLogData(data: Record<string, unknown>): object {
   return JSON.parse(JSON.stringify(data)) as object;
+}
+
+/** Stable DATE value for TypeORM / MySQL from YYYY-MM-DD. */
+function calendarStrToUtcNoonDate(s: string): Date {
+  const [y, m, d] = s.split('-').map((x) => parseInt(x, 10));
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
 }
 
 const PUSHSALE_RETRYABLE_ERROR_SNIPPETS: readonly string[] = [
@@ -295,8 +305,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
     const productIds: number[] = [];
     const adaptionIds: number[] = [];
-    const now = new Date();
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const tz = getAppTimeZone();
+    const { startStr, endStr, todayStr } = calendarMonthBoundsForDate(new Date(), tz);
+    const monthStartDate = calendarStrToUtcNoonDate(startStr);
+    const monthEndDate = calendarStrToUtcNoonDate(endStr);
 
     for (const detail of (data.details || [])) {
       let product = await this.productRepo.findOne({ where: { item_code: detail.itemCode } });
@@ -305,20 +317,27 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           item_code: detail.itemCode,
           item_name: detail.itemName,
           cost_price: 0,
+          delivery_fee: 0,
           weight_gram: detail.weightGram || 0
         });
       }
       productIds.push(product.id);
 
-      let adaption = await this.adaptionRepo.findOne({
-        where: { product_id: product.id, start_date: now }
-      });
+      // Current adaption: start_date <= today <= end_date (inclusive), in app calendar.
+      let adaption = await this.adaptionRepo
+        .createQueryBuilder('a')
+        .where('a.product_id = :pid', { pid: product.id })
+        .andWhere('a.start_date <= :today', { today: todayStr })
+        .andWhere('(a.end_date IS NULL OR a.end_date >= :today)', { today: todayStr })
+        .getOne();
+
       if (!adaption) {
         adaption = await this.adaptionRepo.save({
           product_id: product.id,
-          start_date: now,
-          end_date: endOfMonth,
+          start_date: monthStartDate,
+          end_date: monthEndDate,
           cost_price: 0,
+          delivery_fee: 0,
           selling_price: detail.price || 0
         });
       }

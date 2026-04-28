@@ -14,6 +14,9 @@ export class Product {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   cost_price: number;
 
+  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
+  delivery_fee: number;
+
   @Column({ type: 'int', default: 0 })
   weight_gram: number;
 }

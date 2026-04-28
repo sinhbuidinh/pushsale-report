@@ -19,4 +19,7 @@ export class ProductAdaption {
 
   @Column({ type: 'decimal', precision: 15, scale: 2 })
   selling_price: number;
+
+  @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
+  delivery_fee: number;
 }

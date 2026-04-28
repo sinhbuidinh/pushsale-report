@@ -20,6 +20,24 @@ export function calendarDateInZone(date: Date, timeZone: string = getAppTimeZone
   }).format(date);
 }
 
+/**
+ * First and last calendar day (YYYY-MM-DD) of the month containing `date` in `timeZone`.
+ * Month length uses the Gregorian calendar (same in all zones).
+ */
+export function calendarMonthBoundsForDate(
+  date: Date = new Date(),
+  timeZone: string = getAppTimeZone(),
+): { startStr: string; endStr: string; todayStr: string } {
+  const todayStr = calendarDateInZone(date, timeZone);
+  const [ys, ms] = todayStr.split('-');
+  const y = parseInt(ys, 10);
+  const mo = parseInt(ms, 10);
+  const lastDay = new Date(y, mo, 0).getDate();
+  const startStr = `${ys}-${ms}-01`;
+  const endStr = `${ys}-${String(mo).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  return { startStr, endStr, todayStr };
+}
+
 /** Previous calendar day in the given zone (for default sync target). */
 export function yesterdayCalendarInZone(timeZone: string = getAppTimeZone()): string {
   const formatter = new Intl.DateTimeFormat('en-CA', {
