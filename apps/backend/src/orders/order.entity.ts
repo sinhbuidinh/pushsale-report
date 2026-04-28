@@ -1,4 +1,6 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Customer } from '../users/customer.entity';
+import { User } from '../users/user.entity';
 
 @Entity()
 export class Order {
@@ -8,8 +10,17 @@ export class Order {
   @Column({ unique: true })
   order_number: string;
 
-  @Column()
-  customer_id: number;
+  @ManyToOne(() => Customer)
+  @JoinColumn({ name: 'customer_id' })
+  customer: Customer;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'marketing_user_id' })
+  marketing_user: User | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'sale_user_id' })
+  sale_user: User | null;
 
   @Column({ type: 'simple-array', nullable: true })
   product_adaption_ids: number[];

@@ -286,11 +286,21 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async processOrder(data: any, defaultPasswordHash: string) {
+    let marketing_user_id: number | null = null;
     if (data.marketingUserId > 0) {
-      await this.ensureUser(data.marketingUserName, data.marketingDisplayName, 'marketing', defaultPasswordHash);
+      const u = await this.ensureUser(
+        data.marketingUserName,
+        data.marketingDisplayName,
+        'marketing',
+        defaultPasswordHash,
+      );
+      marketing_user_id = u.id;
     }
+
+    let sale_user_id: number | null = null;
     if (data.saleUserId > 0) {
-      await this.ensureUser(data.saleUserName, data.saleDisplayName, 'sale', defaultPasswordHash);
+      const u = await this.ensureUser(data.saleUserName, data.saleDisplayName, 'sale', defaultPasswordHash);
+      sale_user_id = u.id;
     }
 
     let customer = await this.customerRepo.findOne({ where: { phone: data.customerPhone } });
@@ -344,9 +354,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       adaptionIds.push(adaption.id);
     }
 
-    const orderInfo = {
+    const orderPayload = {
       order_number: data.orderNumber.toString(),
-      customer_id: customer.id,
+      customer: { id: customer.id },
+      marketing_user: marketing_user_id != null ? { id: marketing_user_id } : null,
+      sale_user: sale_user_id != null ? { id: sale_user_id } : null,
       product_adaption_ids: adaptionIds,
       product_ids: productIds,
       total_quantity: data.totalQuantity || 0,
@@ -362,23 +374,24 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       updated_time: data.updateTime
     };
 
-    const existingOrder = await this.orderRepo.findOne({ where: { order_number: orderInfo.order_number } });
+    const existingOrder = await this.orderRepo.findOne({ where: { order_number: orderPayload.order_number } });
     if (existingOrder) {
-      await this.orderRepo.update(existingOrder.id, orderInfo);
+      await this.orderRepo.save({ id: existingOrder.id, ...orderPayload });
     } else {
-      await this.orderRepo.save(orderInfo);
+      await this.orderRepo.save(orderPayload);
     }
   }
 
-  private async ensureUser(username: string, displayName: string, type: string, passwordHash: string) {
-    const user = await this.userRepo.findOne({ where: { username } });
+  private async ensureUser(username: string, displayName: string, type: string, passwordHash: string): Promise<User> {
+    let user = await this.userRepo.findOne({ where: { username } });
     if (!user) {
-      await this.userRepo.save({
+      user = await this.userRepo.save({
         username,
         password: passwordHash,
         display_name: displayName,
         type: type
       });
     }
+    return user;
   }
 }

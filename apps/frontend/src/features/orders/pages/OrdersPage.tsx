@@ -14,7 +14,12 @@ import apiClient from '../../../shared/api/apiClient';
 interface Order {
   id: number;
   order_number: string;
-  customer_id: number;
+  customer_id: number | null;
+  customer_name: string | null;
+  marketing_user_id: number | null;
+  marketing_user_display_name: string | null;
+  sale_user_id: number | null;
+  sale_user_display_name: string | null;
   total_quantity: number;
   total_amount: string;
   total_price: string;
@@ -32,20 +37,52 @@ interface OrdersResponse {
   limit: number;
 }
 
+interface OrderFilterUser {
+  id: number;
+  display_name: string;
+}
+
+interface OrderFilterUsersResponse {
+  marketing: OrderFilterUser[];
+  sale: OrderFilterUser[];
+}
+
 const OrdersPage = () => {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
   const [searchInput, setSearchInput] = useState('');
   const [dateInput, setDateInput] = useState('');
-  
-  // These are the actual values used for the query
+  const [marketingUserInput, setMarketingUserInput] = useState('');
+  const [saleUserInput, setSaleUserInput] = useState('');
+
+  /** Values sent to the API (updated only when Search is clicked). */
   const [searchQuery, setSearchQuery] = useState('');
   const [dateQuery, setDateQuery] = useState('');
+  const [marketingUserQuery, setMarketingUserQuery] = useState('');
+  const [saleUserQuery, setSaleUserQuery] = useState('');
+
+  const { data: filterUsers } = useQuery<OrderFilterUsersResponse>({
+    queryKey: ['users', 'order-filters'],
+    queryFn: async () => {
+      const response = await apiClient.get('/users/order-filters');
+      if (response.data.status) {
+        return response.data.data;
+      }
+      throw new Error(response.data.error || 'Failed to load users');
+    },
+  });
 
   const { data, isLoading, error } = useQuery<OrdersResponse>({
-    queryKey: ['orders', page, limit, searchQuery, dateQuery],
+    queryKey: ['orders', page, limit, searchQuery, dateQuery, marketingUserQuery, saleUserQuery],
     queryFn: async () => {
-      const response = await apiClient.get(`/orders?page=${page}&limit=${limit}&search=${searchQuery}&date=${dateQuery}`);
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('limit', String(limit));
+      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      if (dateQuery.trim()) params.set('date', dateQuery.trim());
+      if (marketingUserQuery.trim()) params.set('marketing_user_id', marketingUserQuery.trim());
+      if (saleUserQuery.trim()) params.set('sale_user_id', saleUserQuery.trim());
+      const response = await apiClient.get(`/orders?${params.toString()}`);
       if (response.data.status) {
         return response.data.data;
       }
@@ -56,14 +93,20 @@ const OrdersPage = () => {
   const handleSearch = () => {
     setSearchQuery(searchInput);
     setDateQuery(dateInput);
+    setMarketingUserQuery(marketingUserInput);
+    setSaleUserQuery(saleUserInput);
     setPage(1);
   };
 
   const handleClear = () => {
     setSearchInput('');
     setDateInput('');
+    setMarketingUserInput('');
+    setSaleUserInput('');
     setSearchQuery('');
     setDateQuery('');
+    setMarketingUserQuery('');
+    setSaleUserQuery('');
     setPage(1);
   };
 
@@ -123,9 +166,6 @@ const OrdersPage = () => {
             placeholder="Ex: 123456..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSearch();
-            }}
             slotProps={{
               input: {
                 startAdornment: (
@@ -143,6 +183,44 @@ const OrdersPage = () => {
             }}
           />
         </Box>
+
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Marketing user</InputLabel>
+          <Select
+            label="Marketing user"
+            value={marketingUserInput}
+            onChange={(e) => setMarketingUserInput(e.target.value as string)}
+            sx={{ bgcolor: 'action.hover' }}
+          >
+            <MenuItem value="">
+              <em>Any</em>
+            </MenuItem>
+            {(filterUsers?.marketing ?? []).map((u) => (
+              <MenuItem key={u.id} value={String(u.id)}>
+                {u.display_name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Sale user</InputLabel>
+          <Select
+            label="Sale user"
+            value={saleUserInput}
+            onChange={(e) => setSaleUserInput(e.target.value as string)}
+            sx={{ bgcolor: 'action.hover' }}
+          >
+            <MenuItem value="">
+              <em>Any</em>
+            </MenuItem>
+            {(filterUsers?.sale ?? []).map((u) => (
+              <MenuItem key={u.id} value={String(u.id)}>
+                {u.display_name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
 
         <Box sx={{ display: 'flex', gap: 1, pb: 0.2 }}>
           <Button 
@@ -171,6 +249,9 @@ const OrdersPage = () => {
             <TableRow>
               <TableCell>ID</TableCell>
               <TableCell>Order Number</TableCell>
+              <TableCell>Customer</TableCell>
+              <TableCell>Marketing</TableCell>
+              <TableCell>Sale</TableCell>
               <TableCell align="right">Quantity</TableCell>
               <TableCell align="right">Total Amount</TableCell>
               <TableCell align="right">Shipping</TableCell>
@@ -186,6 +267,9 @@ const OrdersPage = () => {
               <TableRow key={order.id}>
                 <TableCell>{order.id}</TableCell>
                 <TableCell>{order.order_number}</TableCell>
+                <TableCell>{order.customer_name ?? '—'}</TableCell>
+                <TableCell>{order.marketing_user_display_name ?? '—'}</TableCell>
+                <TableCell>{order.sale_user_display_name ?? '—'}</TableCell>
                 <TableCell align="right">{order.total_quantity}</TableCell>
                 <TableCell align="right">{Number(order.total_amount).toLocaleString()}</TableCell>
                 <TableCell align="right">{Number(order.total_shipping_cost).toLocaleString()}</TableCell>
@@ -198,7 +282,7 @@ const OrdersPage = () => {
             ))}
             {data?.data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} align="center">No orders found.</TableCell>
+                <TableCell colSpan={13} align="center">No orders found.</TableCell>
               </TableRow>
             )}
           </TableBody>
