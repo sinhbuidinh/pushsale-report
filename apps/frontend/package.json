@@ -31,8 +31,19 @@
   },
   "scripts": {
     "start": "node node_modules/react-scripts/bin/react-scripts.js start",
+    "test": "node node_modules/react-scripts/bin/react-scripts.js test",
+    "test:ci": "CI=true node node_modules/react-scripts/bin/react-scripts.js test --watchAll=false",
+    "lint": "ESLINT_USE_FLAT_CONFIG=false eslint \"src/**/*.{ts,tsx,js,jsx}\"",
+    "check": "npm run lint && npm run test:ci",
     "build": "npm run build --prefix ../../packages/shared && node node_modules/react-scripts/bin/react-scripts.js build",
     "eject": "node node_modules/react-scripts/bin/react-scripts.js eject"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router-dom$": "<rootDir>/node_modules/react-router-dom/dist/index.js",
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js",
+      "^react-router$": "<rootDir>/node_modules/react-router/dist/development/index.js"
+    }
   },
   "eslintConfig": {
     "extends": [

@@ -88,7 +88,7 @@ const LoginPage = () => {
             <LockOutlinedIcon />
           </Avatar>
           <Typography component="h1" variant="h5" sx={{ mb: 3 }}>
-            EchoFG Control Panel
+            HungViet Ads Control Panel
           </Typography>
           
           {sessionExpired && (

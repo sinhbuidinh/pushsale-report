@@ -3,6 +3,7 @@ import {
   Navigate,
   RouterProvider,
   createBrowserRouter,
+  type RouteObject,
 } from 'react-router-dom';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
@@ -29,10 +30,10 @@ const PublicRoute = ({ children }: { children: React.ReactElement }) => {
   return children;
 };
 
-const panelBase = `/${PANEL_PREFIX}`;
-
-const router = createBrowserRouter(
-  [
+/** Same route tree as production; used by tests with `createMemoryRouter`. */
+export function createAppRouteObjects(): RouteObject[] {
+  const panelBase = `/${PANEL_PREFIX}`;
+  return [
     { path: '/', element: <LandingPage /> },
     { path: panelBase, element: <PublicRoute><LoginPage /></PublicRoute> },
     {
@@ -86,8 +87,10 @@ const router = createBrowserRouter(
       ),
     },
     { path: '*', element: <NotFoundPage /> },
-  ],
-);
+  ];
+}
+
+const router = createBrowserRouter(createAppRouteObjects());
 
 function App() {
   return (

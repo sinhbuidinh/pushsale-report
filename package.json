@@ -1,6 +1,9 @@
 {
   "name": "sync-project",
   "private": true,
+  "engines": {
+    "node": ">=22.22.2 <23"
+  },
   "scripts": {
     "build:shared": "npm run build --prefix packages/shared",
     "build:backend": "npm run build:shared && npm run build --prefix apps/backend",

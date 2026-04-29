@@ -52,7 +52,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar sx={{ justifyContent: 'space-between' }}>
           <Typography variant="h6" noWrap component="div">
-            EchoFG Control Panel
+            HungViet Ads Control Panel
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Typography variant="body2" sx={{ mr: 2 }}>
