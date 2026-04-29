@@ -1,4 +1,6 @@
-name: CI
+name: ci-health-check
+
+# To block merge until this passes: repo Settings → Branches → rule for main → require check "ci-health-check / build".
 
 # Run only for pull requests into main (not direct pushes to main).
 on:
