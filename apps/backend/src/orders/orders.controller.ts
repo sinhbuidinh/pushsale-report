@@ -33,7 +33,9 @@ export class OrdersController {
         .orderBy('o.id', 'DESC');
 
       if (search?.trim()) {
-        qb.andWhere('o.order_number LIKE :search', { search: `%${search.trim()}%` });
+        qb.andWhere('o.order_number LIKE :search', {
+          search: `%${search.trim()}%`,
+        });
       }
 
       if (date?.trim()) {
@@ -46,7 +48,9 @@ export class OrdersController {
 
       const marketingUserId = parseInt(String(marketingUserIdStr).trim(), 10);
       if (Number.isFinite(marketingUserId) && marketingUserId > 0) {
-        qb.andWhere('o.marketing_user_id = :marketingUserId', { marketingUserId });
+        qb.andWhere('o.marketing_user_id = :marketingUserId', {
+          marketingUserId,
+        });
       }
 
       const saleUserId = parseInt(String(saleUserIdStr).trim(), 10);

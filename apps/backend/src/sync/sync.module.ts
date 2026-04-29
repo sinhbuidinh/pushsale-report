@@ -24,7 +24,7 @@ import { FacebookAdsSyncService } from './facebook-ads-sync.service';
       Order,
       SyncLog,
       FacebookAdsDailyCost,
-    ])
+    ]),
   ],
   controllers: [SyncController],
   providers: [SyncService, SyncLogRepository, FacebookAdsSyncService],

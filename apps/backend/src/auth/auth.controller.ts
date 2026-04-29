@@ -1,4 +1,12 @@
-import { Controller, Post, Body, UnauthorizedException, Get, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UnauthorizedException,
+  Get,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
@@ -9,7 +17,10 @@ export class AuthController {
   @Post('login')
   async login(@Body() body: any) {
     try {
-      const user = await this.authService.validateUser(body.username, body.password);
+      const user = await this.authService.validateUser(
+        body.username,
+        body.password,
+      );
       if (!user) {
         return {
           status: false,
@@ -33,7 +44,10 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async changePassword(@Request() req: any, @Body() body: any) {
     try {
-      const result = await this.authService.updatePassword(req.user.sub, body.newPassword);
+      const result = await this.authService.updatePassword(
+        req.user.sub,
+        body.newPassword,
+      );
       return {
         status: true,
         data: result,

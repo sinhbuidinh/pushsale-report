@@ -10,6 +10,9 @@ export function durationPartsFromMs(elapsedMs: number): DurationParts {
 }
 
 /** Wall-clock duration from `startMs` to `endMs` (default: now). */
-export function durationPartsSince(startMs: number, endMs: number = Date.now()): DurationParts {
+export function durationPartsSince(
+  startMs: number,
+  endMs: number = Date.now(),
+): DurationParts {
   return durationPartsFromMs(endMs - startMs);
 }

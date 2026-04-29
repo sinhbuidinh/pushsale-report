@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "test": "jest",
-    "test:ci": "jest --ci",
+    "ci:check": "npm run lint && jest --ci",
     "build": "npm run build --prefix ../../packages/shared && node node_modules/@nestjs/cli/bin/nest.js build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "node node_modules/@nestjs/cli/bin/nest.js start",

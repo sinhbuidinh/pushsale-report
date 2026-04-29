@@ -10,5 +10,7 @@ export function isRetryableHttpError(
   retryableErrorList: readonly string[],
 ): boolean {
   const msg = httpErrorMessage(err).toLowerCase();
-  return retryableErrorList.some(snippet => msg.includes(snippet.toLowerCase()));
+  return retryableErrorList.some((snippet) =>
+    msg.includes(snippet.toLowerCase()),
+  );
 }

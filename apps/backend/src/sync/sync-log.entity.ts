@@ -1,4 +1,9 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+} from 'typeorm';
 import { SyncStatus, SyncTriggerSource } from '@sync-project/shared';
 
 @Entity()
@@ -19,10 +24,10 @@ export class SyncLog {
   })
   trigger_source: SyncTriggerSource;
 
-  @Column({ 
-    type: 'enum', 
+  @Column({
+    type: 'enum',
     enum: SyncStatus,
-    default: SyncStatus.Processing
+    default: SyncStatus.Processing,
   })
   status: SyncStatus;
 

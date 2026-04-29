@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Like, Repository } from 'typeorm';
 import { Product } from './product.entity';
@@ -73,7 +77,9 @@ export class ProductsService {
       .createQueryBuilder('a')
       .where('a.product_id = :pid', { pid: productId })
       .andWhere('a.start_date <= :today', { today: todayStr })
-      .andWhere('(a.end_date IS NULL OR a.end_date >= :today)', { today: todayStr })
+      .andWhere('(a.end_date IS NULL OR a.end_date >= :today)', {
+        today: todayStr,
+      })
       .getOne();
   }
 
@@ -91,7 +97,10 @@ export class ProductsService {
     const trimmed = (search ?? '').trim();
 
     const where = trimmed
-      ? [{ item_code: Like(`%${trimmed}%`) }, { item_name: Like(`%${trimmed}%`) }]
+      ? [
+          { item_code: Like(`%${trimmed}%`) },
+          { item_name: Like(`%${trimmed}%`) },
+        ]
       : {};
 
     const [products, total] = await this.productRepo.findAndCount({
@@ -126,7 +135,11 @@ export class ProductsService {
       const startStr =
         sd instanceof Date ? calendarDateStr(sd) : String(sd).slice(0, 10);
       const endStr =
-        ed == null ? null : ed instanceof Date ? calendarDateStr(ed) : String(ed).slice(0, 10);
+        ed == null
+          ? null
+          : ed instanceof Date
+            ? calendarDateStr(ed)
+            : String(ed).slice(0, 10);
       return { startStr, endStr };
     };
 
@@ -170,14 +183,20 @@ export class ProductsService {
     productId: number,
     dto: CreateProductAdaptionDto,
   ): Promise<ProductAdaption> {
-    const product = await this.productRepo.findOne({ where: { id: productId } });
+    const product = await this.productRepo.findOne({
+      where: { id: productId },
+    });
     if (!product) {
       throw new NotFoundException(`Product ${productId} not found`);
     }
 
-    const existing = await this.adaptionRepo.count({ where: { product_id: productId } });
+    const existing = await this.adaptionRepo.count({
+      where: { product_id: productId },
+    });
     if (existing > 0) {
-      throw new BadRequestException('Product already has adaptations; edit an existing range instead.');
+      throw new BadRequestException(
+        'Product already has adaptations; edit an existing range instead.',
+      );
     }
 
     parseYmdOrThrow('start_date', dto.start_date);
@@ -200,7 +219,9 @@ export class ProductsService {
     adaptionId: number,
     dto: PatchProductPricesDto,
   ): Promise<ProductAdaption> {
-    const adaption = await this.adaptionRepo.findOne({ where: { id: adaptionId } });
+    const adaption = await this.adaptionRepo.findOne({
+      where: { id: adaptionId },
+    });
     if (!adaption) {
       throw new NotFoundException(`Product adaptation ${adaptionId} not found`);
     }
@@ -210,7 +231,9 @@ export class ProductsService {
       delivery_fee: dto.delivery_fee,
     });
 
-    const updated = await this.adaptionRepo.findOne({ where: { id: adaptionId } });
+    const updated = await this.adaptionRepo.findOne({
+      where: { id: adaptionId },
+    });
     if (!updated) {
       throw new NotFoundException(`Product adaptation ${adaptionId} not found`);
     }

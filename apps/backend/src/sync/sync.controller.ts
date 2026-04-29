@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Body, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Query,
+  UseGuards,
+  BadRequestException,
+} from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { FacebookAdsSyncService } from './facebook-ads-sync.service';
@@ -34,7 +42,10 @@ export class SyncController {
   }
 
   @Get('logs')
-  async getLogs(@Query('page') page: number = 1, @Query('limit') limit: number = 10) {
+  async getLogs(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+  ) {
     try {
       const result = await this.syncService.getSyncLogs(page, limit);
       return {
@@ -72,7 +83,10 @@ export class SyncController {
     } catch (error) {
       throw new BadRequestException({
         status: false,
-        error: error instanceof Error ? error.message : 'Failed to sync Facebook ads data.',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to sync Facebook ads data.',
       });
     }
   }
@@ -89,7 +103,10 @@ export class SyncController {
       });
     }
     try {
-      const result = await this.facebookAdsSyncService.getDailyProductCosts(date, adAccountId);
+      const result = await this.facebookAdsSyncService.getDailyProductCosts(
+        date,
+        adAccountId,
+      );
       return {
         status: true,
         data: result,
@@ -97,7 +114,10 @@ export class SyncController {
     } catch (error) {
       throw new BadRequestException({
         status: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch Facebook ads costs.',
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to fetch Facebook ads costs.',
       });
     }
   }

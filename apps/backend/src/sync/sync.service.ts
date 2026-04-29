@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SyncLogRepository } from './sync-log.repository';
@@ -10,7 +15,11 @@ import { User } from '../users/user.entity';
 import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
-import { PushSaleTypeDate, SyncStatus, SyncTriggerSource } from '@sync-project/shared';
+import {
+  PushSaleTypeDate,
+  SyncStatus,
+  SyncTriggerSource,
+} from '@sync-project/shared';
 import {
   calendarMonthBoundsForDate,
   getAppTimeZone,
@@ -19,7 +28,10 @@ import {
 import { httpErrorMessage } from '../common/http-error.util';
 import { HttpRetryService } from '../common/http-retry.service';
 import { PUSHSALE_REQUEST_INTERVAL_MS } from '../common/pushsale-request-interval';
-import { durationPartsFromMs, durationPartsSince } from '../common/duration-parts';
+import {
+  durationPartsFromMs,
+  durationPartsSince,
+} from '../common/duration-parts';
 
 /**
  * If an error message contains any of these substrings (case-insensitive), {@link HttpRetryService.postJsonWithRetry} waits and retries the same request.
@@ -75,7 +87,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     this.dailyCronJob?.stop();
     const timeZone = getAppTimeZone();
-    const cronExpression = process.env.SYNC_CRON_EXPRESSION?.trim() || '5 0 * * *';
+    const cronExpression =
+      process.env.SYNC_CRON_EXPRESSION?.trim() || '5 0 * * *';
     this.dailyCronJob = new CronJob(
       cronExpression,
       () => void this.handleDailySync(),
@@ -110,7 +123,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     if (ms <= 0) {
       return Promise.resolve();
     }
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async syncOrdersFromPushSale(
@@ -121,8 +134,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const dateStr = targetDate || yesterdayCalendarInZone(getAppTimeZone());
 
     // Fire and forget
-    this.runBackgroundSync(dateStr, pageBegin, triggerSource).catch(err =>
-      this.logger.error(`Background sync failed for ${dateStr}: ${httpErrorMessage(err)}`),
+    this.runBackgroundSync(dateStr, pageBegin, triggerSource).catch((err) =>
+      this.logger.error(
+        `Background sync failed for ${dateStr}: ${httpErrorMessage(err)}`,
+      ),
     );
 
     return {
@@ -141,8 +156,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   ) {
     const clientId = process.env.PUSHSALE_CLIENT_ID || '5662';
     const apiToken = process.env.PUSHSALE_API_TOKEN || '';
-    const apiUrl = process.env.PUSHSALE_API_URL || 'https://pushsale.vn/v1/getdata';
-    const defaultPassword = await bcrypt.hash(process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!', 10);
+    const apiUrl =
+      process.env.PUSHSALE_API_URL || 'https://pushsale.vn/v1/getdata';
+    const defaultPassword = await bcrypt.hash(
+      process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!',
+      10,
+    );
 
     const syncLogData: Record<string, unknown> = {
       sync_date: dateStr,
@@ -174,25 +193,29 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         const pageHandledStartedAt = Date.now();
         this.logger.log(`Fetching page ${currentPage} for date ${dateStr}`);
 
-        const secureToken = crypto.createHash('md5')
+        const secureToken = crypto
+          .createHash('md5')
           .update(`${apiToken}_${pageIndex}_${typeDate}`)
           .digest('hex');
 
-        const { response, durationMs, requestStartedAt: pageRequestStartedAt } =
-          await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
-            `${apiUrl}/GetOrderByConditions`,
-            {
-              clientId,
-              secureToken,
-              pageIndex,
-              pageSize: 100,
-              fromDate,
-              toDate,
-              typeDate,
-              isIncludeDetail: 1,
-            },
-            PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
-          );
+        const {
+          response,
+          durationMs,
+          requestStartedAt: pageRequestStartedAt,
+        } = await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
+          `${apiUrl}/GetOrderByConditions`,
+          {
+            clientId,
+            secureToken,
+            pageIndex,
+            pageSize: 100,
+            fromDate,
+            toDate,
+            typeDate,
+            isIncludeDetail: 1,
+          },
+          PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
+        );
 
         const httpDur = durationPartsFromMs(durationMs);
         this.logger.log(
@@ -233,7 +256,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
         if (hasMore) {
           const elapsedSincePageRequest = Date.now() - pageRequestStartedAt;
-          const remainingInterval = PUSHSALE_REQUEST_INTERVAL_MS - elapsedSincePageRequest;
+          const remainingInterval =
+            PUSHSALE_REQUEST_INTERVAL_MS - elapsedSincePageRequest;
           if (remainingInterval > 0) {
             this.logger.log(`Pacing before next page: ${remainingInterval} ms`);
 
@@ -299,36 +323,48 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
     let sale_user_id: number | null = null;
     if (data.saleUserId > 0) {
-      const u = await this.ensureUser(data.saleUserName, data.saleDisplayName, 'sale', defaultPasswordHash);
+      const u = await this.ensureUser(
+        data.saleUserName,
+        data.saleDisplayName,
+        'sale',
+        defaultPasswordHash,
+      );
       sale_user_id = u.id;
     }
 
-    let customer = await this.customerRepo.findOne({ where: { phone: data.customerPhone } });
+    let customer = await this.customerRepo.findOne({
+      where: { phone: data.customerPhone },
+    });
     if (!customer) {
       customer = await this.customerRepo.save({
         name: data.customerName,
         email: data.customerEmail,
         phone: data.customerPhone,
-        type: data.customerType || 'default'
+        type: data.customerType || 'default',
       });
     }
 
     const productIds: number[] = [];
     const adaptionIds: number[] = [];
     const tz = getAppTimeZone();
-    const { startStr, endStr, todayStr } = calendarMonthBoundsForDate(new Date(), tz);
+    const { startStr, endStr, todayStr } = calendarMonthBoundsForDate(
+      new Date(),
+      tz,
+    );
     const monthStartDate = calendarStrToUtcNoonDate(startStr);
     const monthEndDate = calendarStrToUtcNoonDate(endStr);
 
-    for (const detail of (data.details || [])) {
-      let product = await this.productRepo.findOne({ where: { item_code: detail.itemCode } });
+    for (const detail of data.details || []) {
+      let product = await this.productRepo.findOne({
+        where: { item_code: detail.itemCode },
+      });
       if (!product) {
         product = await this.productRepo.save({
           item_code: detail.itemCode,
           item_name: detail.itemName,
           cost_price: 0,
           delivery_fee: 0,
-          weight_gram: detail.weightGram || 0
+          weight_gram: detail.weightGram || 0,
         });
       }
       productIds.push(product.id);
@@ -338,7 +374,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         .createQueryBuilder('a')
         .where('a.product_id = :pid', { pid: product.id })
         .andWhere('a.start_date <= :today', { today: todayStr })
-        .andWhere('(a.end_date IS NULL OR a.end_date >= :today)', { today: todayStr })
+        .andWhere('(a.end_date IS NULL OR a.end_date >= :today)', {
+          today: todayStr,
+        })
         .getOne();
 
       if (!adaption) {
@@ -348,7 +386,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           end_date: monthEndDate,
           cost_price: 0,
           delivery_fee: 0,
-          selling_price: detail.price || 0
+          selling_price: detail.price || 0,
         });
       }
       adaptionIds.push(adaption.id);
@@ -357,7 +395,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const orderPayload = {
       order_number: data.orderNumber.toString(),
       customer: { id: customer.id },
-      marketing_user: marketing_user_id != null ? { id: marketing_user_id } : null,
+      marketing_user:
+        marketing_user_id != null ? { id: marketing_user_id } : null,
       sale_user: sale_user_id != null ? { id: sale_user_id } : null,
       product_adaption_ids: adaptionIds,
       product_ids: productIds,
@@ -371,10 +410,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       reason_create: data.reasonToCreate,
       confirm_time: data.orderConfirmDate,
       created_time: data.createTime,
-      updated_time: data.updateTime
+      updated_time: data.updateTime,
     };
 
-    const existingOrder = await this.orderRepo.findOne({ where: { order_number: orderPayload.order_number } });
+    const existingOrder = await this.orderRepo.findOne({
+      where: { order_number: orderPayload.order_number },
+    });
     if (existingOrder) {
       await this.orderRepo.save({ id: existingOrder.id, ...orderPayload });
     } else {
@@ -382,14 +423,19 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async ensureUser(username: string, displayName: string, type: string, passwordHash: string): Promise<User> {
+  private async ensureUser(
+    username: string,
+    displayName: string,
+    type: string,
+    passwordHash: string,
+  ): Promise<User> {
     let user = await this.userRepo.findOne({ where: { username } });
     if (!user) {
       user = await this.userRepo.save({
         username,
         password: passwordHash,
         display_name: displayName,
-        type: type
+        type: type,
       });
     }
     return user;

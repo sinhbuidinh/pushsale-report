@@ -11,7 +11,10 @@ export function getAppTimeZone(): string {
 }
 
 /** YYYY-MM-DD for an instant in the given IANA zone. */
-export function calendarDateInZone(date: Date, timeZone: string = getAppTimeZone()): string {
+export function calendarDateInZone(
+  date: Date,
+  timeZone: string = getAppTimeZone(),
+): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
@@ -39,7 +42,9 @@ export function calendarMonthBoundsForDate(
 }
 
 /** Previous calendar day in the given zone (for default sync target). */
-export function yesterdayCalendarInZone(timeZone: string = getAppTimeZone()): string {
+export function yesterdayCalendarInZone(
+  timeZone: string = getAppTimeZone(),
+): string {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
@@ -53,7 +58,10 @@ export function yesterdayCalendarInZone(timeZone: string = getAppTimeZone()): st
 }
 
 /** Wall time + zone label for log lines (not UTC Zulu). */
-export function formatLogTimestamp(date: Date = new Date(), timeZone: string = getAppTimeZone()): string {
+export function formatLogTimestamp(
+  date: Date = new Date(),
+  timeZone: string = getAppTimeZone(),
+): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',

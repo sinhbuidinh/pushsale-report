@@ -4,7 +4,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import { Repository } from 'typeorm';
-import { getAppTimeZone, yesterdayCalendarInZone } from '../common/app-timezone';
+import {
+  getAppTimeZone,
+  yesterdayCalendarInZone,
+} from '../common/app-timezone';
 import { Product } from '../products/product.entity';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
 
@@ -61,7 +64,9 @@ export class FacebookAdsSyncService {
     const appId = process.env.META_APP_ID?.trim();
     const accessToken = process.env.META_ACCESS_TOKEN?.trim();
     const envAccountId = process.env.META_AD_ACCOUNT_ID?.trim();
-    const adAccountId = this.normalizeAdAccountId(input.adAccountId || envAccountId || '');
+    const adAccountId = this.normalizeAdAccountId(
+      input.adAccountId || envAccountId || '',
+    );
 
     if (!appId) {
       throw new Error('META_APP_ID is required in .env');
@@ -70,10 +75,16 @@ export class FacebookAdsSyncService {
       throw new Error('META_ACCESS_TOKEN is required in .env');
     }
     if (!adAccountId) {
-      throw new Error('META_AD_ACCOUNT_ID is required in .env or request body adAccountId');
+      throw new Error(
+        'META_AD_ACCOUNT_ID is required in .env or request body adAccountId',
+      );
     }
 
-    const insights = await this.fetchAdInsightsForDate(syncDate, adAccountId, accessToken);
+    const insights = await this.fetchAdInsightsForDate(
+      syncDate,
+      adAccountId,
+      accessToken,
+    );
     const products = await this.productRepo.find({
       order: { item_code: 'ASC' },
       select: ['id', 'item_code'],
@@ -97,7 +108,10 @@ export class FacebookAdsSyncService {
           : null,
     }));
 
-    await this.dailyCostRepo.delete({ sync_date: syncDate, ad_account_id: adAccountId });
+    await this.dailyCostRepo.delete({
+      sync_date: syncDate,
+      ad_account_id: adAccountId,
+    });
     if (payload.length > 0) {
       await this.dailyCostRepo.save(payload);
     }
@@ -142,7 +156,9 @@ export class FacebookAdsSyncService {
       adAccountId || process.env.META_AD_ACCOUNT_ID?.trim() || '',
     );
     if (!resolvedAccount) {
-      throw new Error('META_AD_ACCOUNT_ID is required in .env or query param adAccountId');
+      throw new Error(
+        'META_AD_ACCOUNT_ID is required in .env or query param adAccountId',
+      );
     }
 
     const rows = await this.dailyCostRepo.find({
@@ -219,7 +235,9 @@ export class FacebookAdsSyncService {
       }
 
       const adName = (row.ad_name || '').toLowerCase();
-      const matched = matchers.find((matcher) => adName.includes(matcher.matchToken));
+      const matched = matchers.find((matcher) =>
+        adName.includes(matcher.matchToken),
+      );
       const key = matched ? String(matched.id) : unmatchedKey;
       const bucket =
         grouped.get(key) ||
@@ -284,6 +302,9 @@ export class FacebookAdsSyncService {
     if (!appSecret) {
       return null;
     }
-    return crypto.createHmac('sha256', appSecret).update(accessToken).digest('hex');
+    return crypto
+      .createHmac('sha256', appSecret)
+      .update(accessToken)
+      .digest('hex');
   }
 }

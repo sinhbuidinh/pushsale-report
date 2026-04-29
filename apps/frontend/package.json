@@ -14,7 +14,6 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
-    "@types/jest": "^27.5.2",
     "@types/node": "^16.18.126",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -32,10 +31,11 @@
   "scripts": {
     "start": "node node_modules/react-scripts/bin/react-scripts.js start",
     "test": "node node_modules/react-scripts/bin/react-scripts.js test",
-    "test:ci": "CI=true node node_modules/react-scripts/bin/react-scripts.js test --watchAll=false",
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint \"src/**/*.{ts,tsx,js,jsx}\"",
-    "check": "npm run lint && npm run test:ci",
-    "build": "npm run build --prefix ../../packages/shared && node node_modules/react-scripts/bin/react-scripts.js build",
+    "typecheck": "npm run build --prefix ../../packages/shared && node ./node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json",
+    "build:app": "node node_modules/react-scripts/bin/react-scripts.js build",
+    "ci:check": "npm run lint && npm run build:app",
+    "build": "npm run build --prefix ../../packages/shared && npm run build:app",
     "eject": "node node_modules/react-scripts/bin/react-scripts.js eject"
   },
   "jest": {

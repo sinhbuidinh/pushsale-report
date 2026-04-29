@@ -26,11 +26,12 @@ export class ProductsController {
     @Query('search') search: string = '',
   ) {
     try {
-      const { data, total } = await this.productsService.findProductListWithAdaptionsPage(
-        Number(page) || 1,
-        Number(limit) || 10,
-        search ?? '',
-      );
+      const { data, total } =
+        await this.productsService.findProductListWithAdaptionsPage(
+          Number(page) || 1,
+          Number(limit) || 10,
+          search ?? '',
+        );
 
       return {
         status: true,
@@ -60,8 +61,10 @@ export class ProductsController {
       delivery_fee?: unknown;
     },
   ) {
-    const start_date = typeof body.start_date === 'string' ? body.start_date.trim() : '';
-    const end_date = typeof body.end_date === 'string' ? body.end_date.trim() : '';
+    const start_date =
+      typeof body.start_date === 'string' ? body.start_date.trim() : '';
+    const end_date =
+      typeof body.end_date === 'string' ? body.end_date.trim() : '';
     const cost_price = Number(body.cost_price);
     const delivery_fee = Number(body.delivery_fee);
     if (!start_date || !end_date) {
@@ -71,7 +74,9 @@ export class ProductsController {
       throw new BadRequestException('cost_price must be a non-negative number');
     }
     if (!Number.isFinite(delivery_fee) || delivery_fee < 0) {
-      throw new BadRequestException('delivery_fee must be a non-negative number');
+      throw new BadRequestException(
+        'delivery_fee must be a non-negative number',
+      );
     }
     try {
       const data = await this.productsService.createFirstAdaption(productId, {
@@ -82,7 +87,10 @@ export class ProductsController {
       });
       return { status: true, data };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
         return { status: false, error: error.message };
       }
       return { status: false, error: (error as Error).message };
@@ -100,7 +108,9 @@ export class ProductsController {
       throw new BadRequestException('cost_price must be a non-negative number');
     }
     if (!Number.isFinite(delivery_fee) || delivery_fee < 0) {
-      throw new BadRequestException('delivery_fee must be a non-negative number');
+      throw new BadRequestException(
+        'delivery_fee must be a non-negative number',
+      );
     }
     try {
       const data = await this.productsService.patchAdaptionPrices(adaptionId, {

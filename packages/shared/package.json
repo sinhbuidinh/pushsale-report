@@ -6,6 +6,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "node ./node_modules/typescript/lib/tsc.js -p tsconfig.json",
+    "ci:check": "npm run build",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
