@@ -64,6 +64,39 @@ interface PushSaleGetOrderResponseBody {
   result?: unknown[];
 }
 
+interface PushSaleOrderDetail {
+  itemCode: string;
+  itemName: string;
+  weightGram?: number;
+  price?: number;
+}
+
+interface PushSaleOrderPayload {
+  marketingUserId: number;
+  marketingUserName: string;
+  marketingDisplayName: string;
+  saleUserId: number;
+  saleUserName: string;
+  saleDisplayName: string;
+  customerPhone: string;
+  customerName: string;
+  customerEmail: string;
+  customerType?: string;
+  details?: PushSaleOrderDetail[];
+  orderNumber: string | number;
+  totalQuantity?: number;
+  totalAmount?: number;
+  totalPrice?: number;
+  totalDeposit?: number;
+  totalDiscount?: number;
+  totalShippingCost?: number;
+  totalCod?: number;
+  reasonToCreate?: string;
+  orderConfirmDate?: string | Date;
+  createTime?: string | Date;
+  updateTime?: string | Date;
+}
+
 @Injectable()
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SyncService.name);
@@ -85,7 +118,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    this.dailyCronJob?.stop();
+    void this.dailyCronJob?.stop();
     const timeZone = getAppTimeZone();
     const cronExpression =
       process.env.SYNC_CRON_EXPRESSION?.trim() || '5 0 * * *';
@@ -100,13 +133,13 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    this.dailyCronJob?.stop();
+    void this.dailyCronJob?.stop();
     this.dailyCronJob = null;
   }
 
-  async handleDailySync() {
+  handleDailySync(): void {
     this.logger.log('Starting automated daily PushSale sync...');
-    await this.syncOrdersFromPushSale(undefined, 1, SyncTriggerSource.Cron);
+    this.syncOrdersFromPushSale(undefined, 1, SyncTriggerSource.Cron);
     this.logger.log('Automated daily PushSale sync completed.');
   }
 
@@ -126,7 +159,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async syncOrdersFromPushSale(
+  syncOrdersFromPushSale(
     targetDate?: string,
     pageBegin: number = 1,
     triggerSource: SyncTriggerSource = SyncTriggerSource.Api,
@@ -244,7 +277,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         }
 
         for (const orderData of results) {
-          await this.processOrder(orderData, defaultPassword);
+          await this.processOrder(
+            orderData as PushSaleOrderPayload,
+            defaultPassword,
+          );
           totalSynced++;
         }
 
@@ -309,7 +345,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async processOrder(data: any, defaultPasswordHash: string) {
+  private async processOrder(
+    data: PushSaleOrderPayload,
+    defaultPasswordHash: string,
+  ) {
     let marketing_user_id: number | null = null;
     if (data.marketingUserId > 0) {
       const u = await this.ensureUser(
@@ -393,7 +432,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     const orderPayload = {
-      order_number: data.orderNumber.toString(),
+      order_number: String(data.orderNumber),
       customer: { id: customer.id },
       marketing_user:
         marketing_user_id != null ? { id: marketing_user_id } : null,

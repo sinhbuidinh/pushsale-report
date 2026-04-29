@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from './order.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { httpErrorMessage } from '../common/http-error.util';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard)
@@ -82,10 +83,10 @@ export class OrdersController {
           limit: take,
         },
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         status: false,
-        error: error.message,
+        error: httpErrorMessage(error),
       };
     }
   }

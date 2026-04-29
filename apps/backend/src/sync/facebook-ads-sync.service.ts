@@ -1,5 +1,6 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
+import type { AxiosResponse } from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
@@ -281,12 +282,13 @@ export class FacebookAdsSyncService {
     let nextUrl: string | null = graphBase;
     let page = 1;
     while (nextUrl) {
-      const response = await firstValueFrom(
-        this.httpService.get<FacebookInsightsResponse>(nextUrl, {
-          params: page === 1 ? params : undefined,
-        }),
-      );
-      const body = response.data;
+      const response: AxiosResponse<FacebookInsightsResponse> =
+        await firstValueFrom(
+          this.httpService.get<FacebookInsightsResponse>(nextUrl, {
+            params: page === 1 ? params : undefined,
+          }),
+        );
+      const body: FacebookInsightsResponse = response.data;
       if (Array.isArray(body?.data)) {
         allRows.push(...body.data);
       }

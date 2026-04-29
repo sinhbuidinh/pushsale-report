@@ -10,6 +10,7 @@ import {
 import { SyncService } from './sync.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { FacebookAdsSyncService } from './facebook-ads-sync.service';
+import { httpErrorMessage } from '../common/http-error.util';
 
 @Controller('sync')
 @UseGuards(JwtAuthGuard)
@@ -20,7 +21,7 @@ export class SyncController {
   ) {}
 
   @Post('orders')
-  async syncOrders(
+  syncOrders(
     @Body('date') date?: string,
     @Body('page_begin') pageBegin?: number,
   ) {
@@ -31,7 +32,7 @@ export class SyncController {
       });
     }
 
-    const result = await this.syncService.syncOrdersFromPushSale(
+    const result = this.syncService.syncOrdersFromPushSale(
       date as string,
       pageBegin ? Number(pageBegin) : 1,
     );
@@ -52,10 +53,10 @@ export class SyncController {
         status: true,
         data: result,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         status: false,
-        error: error.message,
+        error: httpErrorMessage(error),
       };
     }
   }

@@ -7,7 +7,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Like, Repository } from 'typeorm';
 import { Product } from './product.entity';
 import { ProductAdaption } from './product-adaption.entity';
-import { calendarDateInZone, getAppTimeZone } from '../common/app-timezone';
 
 export interface PatchProductPricesDto {
   cost_price: number;
