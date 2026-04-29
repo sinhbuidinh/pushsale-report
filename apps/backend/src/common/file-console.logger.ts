@@ -2,7 +2,11 @@ import { ConsoleLogger, LogLevel } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { inspect } from 'node:util';
-import { calendarDateInZone, formatLogTimestamp, getAppTimeZone } from './app-timezone';
+import {
+  calendarDateInZone,
+  formatLogTimestamp,
+  getAppTimeZone,
+} from './app-timezone';
 
 const LOG_DIR = 'logs';
 
@@ -18,7 +22,10 @@ function isFileLogEnabled(): boolean {
   return process.env.ENABLE_LOG?.trim().toLowerCase() === 'true';
 }
 
-function shouldSilenceNestBootstrap(context: string | undefined, logLevel: LogLevel): boolean {
+function shouldSilenceNestBootstrap(
+  context: string | undefined,
+  logLevel: LogLevel,
+): boolean {
   if (!context || !SILENCED_LOG_CONTEXTS.has(context)) {
     return false;
   }
@@ -56,7 +63,13 @@ export class FileConsoleLogger extends ConsoleLogger {
     if (shouldSilenceNestBootstrap(context, logLevel)) {
       return;
     }
-    super.printMessages(messages, context, logLevel, writeStreamType, errorStack);
+    super.printMessages(
+      messages,
+      context,
+      logLevel,
+      writeStreamType,
+      errorStack,
+    );
     if (this.options?.json || !isFileLogEnabled()) {
       return;
     }

@@ -1,47 +1,79 @@
-import { Controller, Post, Body, UnauthorizedException, Get, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  UseGuards,
+  Request,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { httpErrorMessage } from '../common/http-error.util';
+
+interface LoginBody {
+  username: string;
+  password: string;
+}
+
+interface ChangePasswordBody {
+  newPassword: string;
+}
+
+interface JwtRequestUser {
+  sub: number;
+  username: string;
+  type: string;
+}
 
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('login')
-  async login(@Body() body: any) {
+  async login(@Body() body: LoginBody) {
     try {
-      const user = await this.authService.validateUser(body.username, body.password);
+      const user = await this.authService.validateUser(
+        body.username,
+        body.password,
+      );
       if (!user) {
         return {
           status: false,
           error: 'Invalid username or password',
         };
       }
-      const data = await this.authService.login(user);
+      const data = this.authService.login(user);
       return {
         status: true,
         data: data,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         status: false,
-        error: error.message,
+        error: httpErrorMessage(error),
       };
     }
   }
 
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
-  async changePassword(@Request() req: any, @Body() body: any) {
+  async changePassword(
+    @Request() req: { user: JwtRequestUser },
+    @Body() body: ChangePasswordBody,
+  ) {
     try {
-      const result = await this.authService.updatePassword(req.user.sub, body.newPassword);
+      const result = await this.authService.updatePassword(
+        req.user.sub,
+        body.newPassword,
+      );
       return {
         status: true,
         data: result,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         status: false,
-        error: error.message,
+        error: httpErrorMessage(error),
       };
     }
   }
@@ -54,10 +86,10 @@ export class AuthController {
         status: true,
         data: result,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         status: false,
-        error: error.message,
+        error: httpErrorMessage(error),
       };
     }
   }

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from './order.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { httpErrorMessage } from '../common/http-error.util';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard)
@@ -33,7 +34,9 @@ export class OrdersController {
         .orderBy('o.id', 'DESC');
 
       if (search?.trim()) {
-        qb.andWhere('o.order_number LIKE :search', { search: `%${search.trim()}%` });
+        qb.andWhere('o.order_number LIKE :search', {
+          search: `%${search.trim()}%`,
+        });
       }
 
       if (date?.trim()) {
@@ -46,7 +49,9 @@ export class OrdersController {
 
       const marketingUserId = parseInt(String(marketingUserIdStr).trim(), 10);
       if (Number.isFinite(marketingUserId) && marketingUserId > 0) {
-        qb.andWhere('o.marketing_user_id = :marketingUserId', { marketingUserId });
+        qb.andWhere('o.marketing_user_id = :marketingUserId', {
+          marketingUserId,
+        });
       }
 
       const saleUserId = parseInt(String(saleUserIdStr).trim(), 10);
@@ -78,10 +83,10 @@ export class OrdersController {
           limit: take,
         },
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         status: false,
-        error: error.message,
+        error: httpErrorMessage(error),
       };
     }
   }

@@ -1,8 +1,9 @@
-name: CI
+name: ci-health-check
 
+# To block merge until this passes: repo Settings → Branches → rule for main → require check "ci-health-check / build".
+
+# Run only for pull requests into main (not direct pushes to main).
 on:
-  push:
-    branches: [main, master]
   pull_request:
     branches: [main, master]
 
@@ -27,11 +28,11 @@ jobs:
           npm ci --prefix apps/backend
           npm ci --prefix apps/frontend
 
+      - name: Shared check
+        run: npm run ci:check --prefix packages/shared
+
       - name: Frontend check
-        run: npm run check --prefix apps/frontend
+        run: npm run ci:check --prefix apps/frontend
 
-      - name: Backend test (GET / → AppService.getHello)
-        run: npm run test:ci --prefix apps/backend
-
-      - name: Build
-        run: npm run build
+      - name: Backend check
+        run: npm run ci:check --prefix apps/backend

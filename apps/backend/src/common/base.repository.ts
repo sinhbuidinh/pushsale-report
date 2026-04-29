@@ -6,7 +6,9 @@ import {
   UpdateResult,
 } from 'typeorm';
 
-export abstract class BaseRepository<Entity extends ObjectLiteral> extends Repository<Entity> {
+export abstract class BaseRepository<
+  Entity extends ObjectLiteral,
+> extends Repository<Entity> {
   async createRow(partial: DeepPartial<Entity>): Promise<Entity> {
     const entity = this.create(partial);
     return this.save(entity);

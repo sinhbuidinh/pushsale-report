@@ -5,6 +5,9 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../users/user.entity';
 
+/** User fields exposed after authentication (password never included). */
+export type SafeUser = Omit<User, 'password'>;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -13,16 +16,20 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async validateUser(username: string, pass: string): Promise<any> {
+  async validateUser(username: string, pass: string): Promise<SafeUser | null> {
     const user = await this.userRepo.findOne({ where: { username } });
     if (user && user.password && (await bcrypt.compare(pass, user.password))) {
-      const { password, ...result } = user;
-      return result;
+      return {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name,
+        type: user.type,
+      };
     }
     return null;
   }
 
-  async login(user: any) {
+  login(user: SafeUser) {
     const payload = { username: user.username, sub: user.id, type: user.type };
     return {
       access_token: this.jwtService.sign(payload),
