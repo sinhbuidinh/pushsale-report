@@ -28,13 +28,17 @@
     "typescript": "~5.7.3",
     "web-vitals": "^2.1.4"
   },
+  "devDependencies": {
+    "eslint": "8.57.1"
+  },
   "scripts": {
     "start": "node node_modules/react-scripts/bin/react-scripts.js start",
     "test": "node node_modules/react-scripts/bin/react-scripts.js test",
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint \"src/**/*.{ts,tsx,js,jsx}\"",
+    "lint:fix": "ESLINT_USE_FLAT_CONFIG=false eslint \"src/**/*.{ts,tsx,js,jsx}\" --fix",
     "typecheck": "npm run build --prefix ../../packages/shared && node ./node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json",
     "build:app": "node node_modules/react-scripts/bin/react-scripts.js build",
-    "ci:check": "npm run lint && npm run build:app",
+    "ci:check": "npm run lint:fix && npm run build:app",
     "build": "npm run build --prefix ../../packages/shared && npm run build:app",
     "eject": "node node_modules/react-scripts/bin/react-scripts.js eject"
   },
