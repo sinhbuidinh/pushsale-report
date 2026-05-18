@@ -55,9 +55,15 @@ describe('parseProductRowsFromXls', () => {
       ['1', 'SP1', 'Giày Nam', 750000, 1500000, 1000],
     ];
     const sheet = XLSX.utils.aoa_to_sheet(rows);
-    sheet['D2'].z = '#,##0';
-    sheet['E2'].z = '#,##0';
-    sheet['F2'].z = '#,##0';
+    const setNumberFormat = (address: string, format: string) => {
+      const cell = sheet[address] as { z?: string } | undefined;
+      if (cell) {
+        cell.z = format;
+      }
+    };
+    setNumberFormat('D2', '#,##0');
+    setNumberFormat('E2', '#,##0');
+    setNumberFormat('F2', '#,##0');
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
     const buffer = XLSX.write(book, {

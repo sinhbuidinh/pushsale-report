@@ -30,10 +30,30 @@ const REQUIRED_HEADERS = [
   HEADER_WEIGHT_GRAM,
 ] as const;
 
+type XlsxSheetCell = {
+  v?: unknown;
+  w?: string;
+};
+
+function unknownToString(value: unknown): string {
+  if (value == null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value);
+  }
+  return '';
+}
+
 function normalizeHeader(value: unknown): string {
-  return String(value ?? '')
-    .trim()
-    .replace(/\s+/g, ' ');
+  return unknownToString(value).trim().replace(/\s+/g, ' ');
 }
 
 /** Normalize locale-formatted numbers (VN dot thousands, Excel comma thousands). */
@@ -69,7 +89,7 @@ export function parseVietnameseNumber(value: unknown): number {
   const raw =
     typeof value === 'number' && Number.isFinite(value)
       ? String(value)
-      : String(value).trim();
+      : unknownToString(value).trim();
   if (!raw) {
     return 0;
   }
@@ -85,11 +105,11 @@ function getCellDisplayValue(
   col: number,
 ): unknown {
   const ref = XLSX.utils.encode_cell({ r: row, c: col });
-  const cell = sheet[ref];
+  const cell = sheet[ref] as XlsxSheetCell | undefined;
   if (!cell) {
     return undefined;
   }
-  const formatted = cell.w != null ? String(cell.w).trim() : '';
+  const formatted = cell.w != null ? cell.w.trim() : '';
   if (formatted !== '') {
     return formatted;
   }
@@ -119,7 +139,11 @@ function buildColumnIndex(headers: string[]): Record<string, number> {
   return index;
 }
 
-function cellAt(row: unknown[], colIndex: Record<string, number>, header: string): unknown {
+function cellAt(
+  row: unknown[],
+  colIndex: Record<string, number>,
+  header: string,
+): unknown {
   const idx = colIndex[header];
   if (idx == null) {
     return undefined;
@@ -131,7 +155,9 @@ function cellAt(row: unknown[], colIndex: Record<string, number>, header: string
  * Reads the first worksheet of a legacy .xls / .xlsx buffer and returns product rows.
  * Skips blank lines; rows without `Tên sản phẩm gốc` are counted in `skipped`.
  */
-export function parseProductRowsFromXls(buffer: Buffer): ProductImportParseResult {
+export function parseProductRowsFromXls(
+  buffer: Buffer,
+): ProductImportParseResult {
   const errors: string[] = [];
   const rows: ProductImportRow[] = [];
   let skipped = 0;
@@ -185,8 +211,12 @@ export function parseProductRowsFromXls(buffer: Buffer): ProductImportParseResul
   for (let r = headerRowIndex + 1; r < matrix.length; r++) {
     const row = matrix[r] ?? [];
     const rowNumber = r + 1;
-    const itemCode = String(cellAt(row, colIndex, HEADER_ITEM_CODE) ?? '').trim();
-    const itemName = String(cellAt(row, colIndex, HEADER_ITEM_NAME) ?? '').trim();
+    const itemCode = unknownToString(
+      cellAt(row, colIndex, HEADER_ITEM_CODE),
+    ).trim();
+    const itemName = unknownToString(
+      cellAt(row, colIndex, HEADER_ITEM_NAME),
+    ).trim();
 
     if (!itemCode && !itemName) {
       skipped++;
@@ -206,9 +236,7 @@ export function parseProductRowsFromXls(buffer: Buffer): ProductImportParseResul
       rowNumber,
       item_code: itemCode,
       item_name: itemName || itemCode,
-      cost_price: parseVietnameseNumber(
-        getCellDisplayValue(sheet, r, costCol),
-      ),
+      cost_price: parseVietnameseNumber(getCellDisplayValue(sheet, r, costCol)),
       selling_price: parseVietnameseNumber(
         getCellDisplayValue(sheet, r, sellCol),
       ),

@@ -66,7 +66,9 @@ export class ProductsController {
       throw new BadRequestException('Only .xls or .xlsx files are supported');
     }
     try {
-      const data = await this.productsService.importProductsFromXls(file.buffer);
+      const data = await this.productsService.importProductsFromXls(
+        file.buffer,
+      );
       return { status: true, data };
     } catch (error) {
       return { status: false, error: (error as Error).message };

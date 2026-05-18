@@ -125,10 +125,7 @@ export class FacebookAdsSyncService {
     });
     const countByUserId = new Map<number, number>();
     for (const row of accountRows) {
-      countByUserId.set(
-        row.user_id,
-        (countByUserId.get(row.user_id) ?? 0) + 1,
-      );
+      countByUserId.set(row.user_id, (countByUserId.get(row.user_id) ?? 0) + 1);
     }
 
     return users.map((user) => ({
@@ -139,7 +136,9 @@ export class FacebookAdsSyncService {
   }
 
   private async resolveMarketingUserWithAdsAccounts(marketingUserId: number) {
-    const user = await this.userRepo.findOne({ where: { id: marketingUserId } });
+    const user = await this.userRepo.findOne({
+      where: { id: marketingUserId },
+    });
     if (!user) {
       throw new Error('User not found.');
     }
@@ -158,10 +157,7 @@ export class FacebookAdsSyncService {
     return { user, adsAccounts };
   }
 
-  async getSyncStatusForMarketingUser(
-    marketingUserId: number,
-    date?: string,
-  ) {
+  async getSyncStatusForMarketingUser(marketingUserId: number, date?: string) {
     const { user, adsAccounts } =
       await this.resolveMarketingUserWithAdsAccounts(marketingUserId);
     const syncDate = this.resolveSyncDate(date);
@@ -255,10 +251,7 @@ export class FacebookAdsSyncService {
     };
   }
 
-  async getDailyCostsForMarketingUser(
-    marketingUserId: number,
-    date?: string,
-  ) {
+  async getDailyCostsForMarketingUser(marketingUserId: number, date?: string) {
     const { user, adsAccounts } =
       await this.resolveMarketingUserWithAdsAccounts(marketingUserId);
     const syncDate = this.resolveSyncDate(date);
@@ -315,8 +308,7 @@ export class FacebookAdsSyncService {
         unmatched_ads_count: row.unmatched_ads_count,
         notes: row.notes,
         can_resync: row.unmatched_ads_count > 0,
-        can_normalize:
-          canNormalizeByAccountId.get(row.ad_account_id) ?? false,
+        can_normalize: canNormalizeByAccountId.get(row.ad_account_id) ?? false,
         updated_at: row.updated_at?.toISOString() ?? null,
       })),
     };
@@ -351,9 +343,7 @@ export class FacebookAdsSyncService {
       );
     }
     if (!this.hasNonEmptySnapshotResponse(snapshot.response)) {
-      throw new Error(
-        'Insights snapshot has no response data to normalize.',
-      );
+      throw new Error('Insights snapshot has no response data to normalize.');
     }
 
     const insights = snapshot.response as FacebookAdInsight[];
@@ -456,7 +446,7 @@ export class FacebookAdsSyncService {
       throw new Error('META_ACCESS_TOKEN is required in .env');
     }
 
-    // Step-1: fetch ad-level insights from Meta (spend, ad_name, currency); 
+    // Step-1: fetch ad-level insights from Meta (spend, ad_name, currency);
     const insights = await this.fetchAdInsightsForDate(
       syncDate,
       adAccountId,
@@ -499,9 +489,13 @@ export class FacebookAdsSyncService {
     const matcherByItemCodeKey = this.buildMatcherMapByItemCodeKey(products);
 
     // Step-4: Aggregate spend into buckets per product and one bucket for ads that matched nothing;
-    const buckets = this.aggregateSpendByProduct(insights, matcherByItemCodeKey);
+    const buckets = this.aggregateSpendByProduct(
+      insights,
+      matcherByItemCodeKey,
+    );
 
-    const currency = insights.find((row) => row.account_currency)?.account_currency || 'VND';
+    const currency =
+      insights.find((row) => row.account_currency)?.account_currency || 'VND';
 
     // Step-5: Map buckets to DB rows, delete existing rows for this sync_date + ad_account_id, then save (full replace for idempotency);
     const payload = buckets.map((bucket) => ({
@@ -821,14 +815,15 @@ export class FacebookAdsSyncService {
       const requestConfig = { params: page === 1 ? params : undefined };
       this.logger.log(
         '-- Try fetch AdInsights by: ' +
-          (page === 1
-            ? generateGraphUrl(nextUrl, params)
-            : nextUrl),
+          (page === 1 ? generateGraphUrl(nextUrl, params) : nextUrl),
       );
 
       const response: AxiosResponse<FacebookInsightsResponse> =
         await firstValueFrom(
-          this.httpService.get<FacebookInsightsResponse>(nextUrl, requestConfig),
+          this.httpService.get<FacebookInsightsResponse>(
+            nextUrl,
+            requestConfig,
+          ),
         );
       const body: FacebookInsightsResponse = response.data;
       if (Array.isArray(body?.data)) {

@@ -13,12 +13,11 @@ import {
 import { Product } from '../products/product.entity';
 
 @Entity()
-@Index('UQ_ad_account_daily_spend_for_product', [
-  'sync_date',
-  'ad_account_id',
-  'product_id',
-  'product_code',
-], { unique: true })
+@Index(
+  'UQ_ad_account_daily_spend_for_product',
+  ['sync_date', 'ad_account_id', 'product_id', 'product_code'],
+  { unique: true },
+)
 @Index(['sync_date', 'product_id'])
 export class FacebookAdsDailyCost {
   @PrimaryGeneratedColumn()

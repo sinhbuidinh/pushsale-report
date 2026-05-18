@@ -78,8 +78,7 @@ export class SyncController {
   @Get('facebook-ads/marketing-users')
   async listFacebookAdsMarketingUsers() {
     try {
-      const data =
-        await this.facebookAdsSyncService.listMarketingUsers();
+      const data = await this.facebookAdsSyncService.listMarketingUsers();
       return { status: true, data };
     } catch (error: unknown) {
       return {
@@ -101,7 +100,8 @@ export class SyncController {
     if (!marketingUserIdStr?.trim() || !Number.isFinite(marketingUserId)) {
       throw new BadRequestException({
         status: false,
-        error: 'marketing_user_id query param is required and must be a number.',
+        error:
+          'marketing_user_id query param is required and must be a number.',
       });
     }
     if (date && !YMD_QUERY_RE.test(date)) {
@@ -137,7 +137,8 @@ export class SyncController {
     if (!marketingUserIdStr?.trim() || !Number.isFinite(marketingUserId)) {
       throw new BadRequestException({
         status: false,
-        error: 'marketing_user_id query param is required and must be a number.',
+        error:
+          'marketing_user_id query param is required and must be a number.',
       });
     }
     if (date && !YMD_QUERY_RE.test(date)) {

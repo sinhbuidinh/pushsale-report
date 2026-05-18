@@ -12,13 +12,15 @@ describe('extractItemCodeKeyFromCampaignName', () => {
   });
 
   it('extracts item_code before pipe separator (legacy format)', () => {
-    expect(
-      extractItemCodeKeyFromCampaignName('SKU123 | Summer promo'),
-    ).toBe('sku123');
+    expect(extractItemCodeKeyFromCampaignName('SKU123 | Summer promo')).toBe(
+      'sku123',
+    );
   });
 
   it('uses full trimmed name when no separator is present', () => {
-    expect(extractItemCodeKeyFromCampaignName('HVSH-SAC-AQ')).toBe('hvsh-sac-aq');
+    expect(extractItemCodeKeyFromCampaignName('HVSH-SAC-AQ')).toBe(
+      'hvsh-sac-aq',
+    );
     expect(extractItemCodeKeyFromCampaignName('  HVSH-SAC-AQ  ')).toBe(
       'hvsh-sac-aq',
     );

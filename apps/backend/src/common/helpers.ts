@@ -1,10 +1,12 @@
-export function generateGraphUrl(baseUrl, params) {
-    const url = new URL(baseUrl);
+export function generateGraphUrl(
+  baseUrl: string,
+  params: Record<string, string>,
+): string {
+  const url = new URL(baseUrl);
 
-    // URLSearchParams handles the encoding of the JSON string automatically
-    Object.keys(params).forEach(key => {
-        url.searchParams.append(key, params[key]);
-    });
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.append(key, value);
+  }
 
-    return url.toString();
+  return url.toString();
 }

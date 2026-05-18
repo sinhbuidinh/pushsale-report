@@ -324,7 +324,7 @@ export class ProductsService {
       ctx.result.productsCreated++;
     }
 
-    let adaption = await this.findAdaptionActiveOnCalendarDate(
+    const adaption = await this.findAdaptionActiveOnCalendarDate(
       product.id,
       ctx.todayStr,
     );
