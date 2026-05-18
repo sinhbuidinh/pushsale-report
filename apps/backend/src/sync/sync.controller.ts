@@ -8,6 +8,8 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  DefaultValuePipe,
+  ParseBoolPipe,
 } from '@nestjs/common';
 import { isAxiosError } from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -402,9 +404,14 @@ export class SyncController {
    */
   @Get('facebook-ads/insights')
   async getFacebookAdsInsights(
+    @Query(
+      'filter_is_active_campaign',
+      new DefaultValuePipe(false),
+      ParseBoolPipe,
+    )
+    filterIsActiveCampaign: boolean,
     @Query('ad_account_id') adAccountId?: string,
     @Query('date') date?: string,
-    @Query('filter_is_active_campaign') filterIsActiveCampaign?: boolean,
   ) {
     const id = adAccountId?.trim();
     if (!id || !META_AD_ACCOUNT_ID_NUMERIC_RE.test(id)) {
@@ -426,7 +433,7 @@ export class SyncController {
         await this.facebookAdsSyncService.getAdInsightsForAccountAndDate({
           adAccountId: id,
           date,
-          filterIsActiveCampaign: filterIsActiveCampaign ?? false,
+          filterIsActiveCampaign,
         });
       return {
         status: true,

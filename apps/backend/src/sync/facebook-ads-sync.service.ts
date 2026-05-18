@@ -14,7 +14,7 @@ import { AdsAccount } from '../users/ads-account.entity';
 import { User } from '../users/user.entity';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
 import { FacebookAdsInsightsSnapshot } from './facebook-ads-insights-snapshot.entity';
-import { generateGraphUrl } from 'src/common/helpers';
+import { generateGraphUrl, type GraphQueryParams } from 'src/common/helpers';
 import {
   CAMPAIGN_NAME_PIPE_SEPARATOR,
   CAMPAIGN_NAME_SUFFIX_SEPARATOR,
@@ -762,7 +762,7 @@ export class FacebookAdsSyncService {
     // Field list: https://developers.facebook.com/documentation/ads-commerce/marketing-api/reference/ad-account/insights
     // Many `cost_per_*` names appear in the doc but are not valid `fields` at `level=ad` (Graph returns #100).
     // Use `cost_per_action_type` + `actions` for per-action costs (e.g. submit_application).
-    const params = {
+    const params: GraphQueryParams = {
       access_token: accessToken,
       fields: [
         // account
@@ -798,7 +798,9 @@ export class FacebookAdsSyncService {
     };
 
     if (filterIsActiveCampaign === true) {
-      params['filtering'] = JSON.stringify([
+      this.logger.log('-- Filtering active campaigns ONLY');
+
+      params.filtering = JSON.stringify([
         {
           field: 'campaign.effective_status',
           operator: 'IN',
