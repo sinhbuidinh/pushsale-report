@@ -33,7 +33,7 @@ describe('extractItemCodeKeyFromCampaignName', () => {
   });
 
   it('documents expected separator constants', () => {
-    expect(CAMPAIGN_NAME_SUFFIX_SEPARATOR).toBe(' -');
+    expect(CAMPAIGN_NAME_SUFFIX_SEPARATOR).toBe(' ');
     expect(CAMPAIGN_NAME_PIPE_SEPARATOR).toBe('|');
   });
 });
