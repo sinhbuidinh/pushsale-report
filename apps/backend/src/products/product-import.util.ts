@@ -36,21 +36,64 @@ function normalizeHeader(value: unknown): string {
     .replace(/\s+/g, ' ');
 }
 
-/** Vietnamese spreadsheet numbers often use "." as thousands separator (e.g. 750.000). */
+/** Normalize locale-formatted numbers (VN dot thousands, Excel comma thousands). */
+function normalizeLocalizedNumber(raw: string): string {
+  const hasDot = raw.includes('.');
+  const hasComma = raw.includes(',');
+
+  if (hasDot && hasComma) {
+    return raw.lastIndexOf(',') > raw.lastIndexOf('.')
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw.replace(/,/g, '');
+  }
+  if (hasComma && /^\d{1,3}(,\d{3})+$/.test(raw)) {
+    return raw.replace(/,/g, '');
+  }
+  if (hasDot && /^\d{1,3}(\.\d{3})+$/.test(raw)) {
+    return raw.replace(/\./g, '');
+  }
+  if (hasComma) {
+    return raw.replace(',', '.');
+  }
+  return raw;
+}
+
+/**
+ * Vietnamese spreadsheet numbers use "." as thousands separator (e.g. 750.000 → 750000)
+ * and "," as decimal separator (e.g. 12,5 → 12.5). Excel may also emit comma thousands.
+ */
 export function parseVietnameseNumber(value: unknown): number {
   if (value == null || value === '') {
     return 0;
   }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  const raw = String(value).trim();
+  const raw =
+    typeof value === 'number' && Number.isFinite(value)
+      ? String(value)
+      : String(value).trim();
   if (!raw) {
     return 0;
   }
-  const normalized = raw.replace(/\./g, '').replace(/,/g, '.');
+  const normalized = normalizeLocalizedNumber(raw);
   const n = Number.parseFloat(normalized);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Prefer Excel formatted text (`w`) so values like 750.000 are not read as 750. */
+function getCellDisplayValue(
+  sheet: XLSX.WorkSheet,
+  row: number,
+  col: number,
+): unknown {
+  const ref = XLSX.utils.encode_cell({ r: row, c: col });
+  const cell = sheet[ref];
+  if (!cell) {
+    return undefined;
+  }
+  const formatted = cell.w != null ? String(cell.w).trim() : '';
+  if (formatted !== '') {
+    return formatted;
+  }
+  return cell.v;
 }
 
 function findHeaderRowIndex(matrix: unknown[][]): number {
@@ -99,7 +142,7 @@ export function parseProductRowsFromXls(buffer: Buffer): ProductImportParseResul
 
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(buffer, { type: 'buffer' });
+    workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true });
   } catch {
     return { rows, skipped, errors: ['Could not read Excel file'] };
   }
@@ -155,18 +198,22 @@ export function parseProductRowsFromXls(buffer: Buffer): ProductImportParseResul
       continue;
     }
 
+    const costCol = colIndex[HEADER_COST_PRICE];
+    const sellCol = colIndex[HEADER_SELLING_PRICE];
+    const weightCol = colIndex[HEADER_WEIGHT_GRAM];
+
     rows.push({
       rowNumber,
       item_code: itemCode,
       item_name: itemName || itemCode,
       cost_price: parseVietnameseNumber(
-        cellAt(row, colIndex, HEADER_COST_PRICE),
+        getCellDisplayValue(sheet, r, costCol),
       ),
       selling_price: parseVietnameseNumber(
-        cellAt(row, colIndex, HEADER_SELLING_PRICE),
+        getCellDisplayValue(sheet, r, sellCol),
       ),
       weight_gram: Math.round(
-        parseVietnameseNumber(cellAt(row, colIndex, HEADER_WEIGHT_GRAM)),
+        parseVietnameseNumber(getCellDisplayValue(sheet, r, weightCol)),
       ),
     });
   }

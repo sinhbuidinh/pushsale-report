@@ -11,8 +11,14 @@ describe('parseVietnameseNumber', () => {
     expect(parseVietnameseNumber('1.000')).toBe(1000);
   });
 
-  it('returns numbers as-is', () => {
+  it('parses comma thousands separators from Excel number formats', () => {
+    expect(parseVietnameseNumber('750,000')).toBe(750000);
+    expect(parseVietnameseNumber('1,500,000')).toBe(1500000);
+  });
+
+  it('parses numeric values without thousands separators', () => {
     expect(parseVietnameseNumber(429000)).toBe(429000);
+    expect(parseVietnameseNumber(750)).toBe(750);
   });
 });
 
@@ -36,20 +42,53 @@ describe('parseProductRowsFromXls', () => {
     return XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
   }
 
+  it('reads numeric cells with Excel thousands formatting', () => {
+    const rows = [
+      [
+        'STT',
+        'Mã sản phẩm',
+        'Tên sản phẩm gốc',
+        'Giá nhập',
+        'Đơn giá',
+        'Khối lượng (gram)',
+      ],
+      ['1', 'SP1', 'Giày Nam', 750000, 1500000, 1000],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet['D2'].z = '#,##0';
+    sheet['E2'].z = '#,##0';
+    sheet['F2'].z = '#,##0';
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
+    const buffer = XLSX.write(book, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
+
+    const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
+    expect(errors).toEqual([]);
+    expect(parsed[0]).toMatchObject({
+      item_code: 'SP1',
+      cost_price: 750000,
+      selling_price: 1500000,
+      weight_gram: 1000,
+    });
+  });
+
   it('maps Vietnamese headers to product fields', () => {
     const { rows, errors } = parseProductRowsFromXls(buildSampleBuffer());
     expect(errors).toEqual([]);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
-      item_code: 'Giày Nam',
-      item_name: 'SP1',
+      item_code: 'SP1',
+      item_name: 'Giày Nam',
       cost_price: 750000,
       selling_price: 1500000,
       weight_gram: 300,
     });
     expect(rows[1]).toMatchObject({
-      item_code: 'BÀN CHẢI TÂM ĐIỆN',
-      item_name: 'SP033',
+      item_code: 'SP033',
+      item_name: 'BÀN CHẢI TÂM ĐIỆN',
       cost_price: 193000,
       selling_price: 429000,
       weight_gram: 1000,
