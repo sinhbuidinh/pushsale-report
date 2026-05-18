@@ -97,6 +97,15 @@ interface PushSaleOrderPayload {
   updateTime?: string | Date;
 }
 
+/** Order entity stores these columns as strings; API may send Date. */
+function optionalDateTimeString(
+  v: string | Date | undefined,
+): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'string') return v;
+  return v.toISOString();
+}
+
 @Injectable()
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SyncService.name);
@@ -394,6 +403,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const monthEndDate = calendarStrToUtcNoonDate(endStr);
 
     for (const detail of data.details || []) {
+      if (!detail.itemCode) {
+        continue;
+      }
+
       let product = await this.productRepo.findOne({
         where: { item_code: detail.itemCode },
       });
@@ -447,9 +460,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       total_shipping_cost: data.totalShippingCost || 0,
       total_cod: data.totalCod || 0,
       reason_create: data.reasonToCreate,
-      confirm_time: data.orderConfirmDate,
-      created_time: data.createTime,
-      updated_time: data.updateTime,
+      confirm_time: optionalDateTimeString(data.orderConfirmDate),
+      created_time: optionalDateTimeString(data.createTime),
+      updated_time: optionalDateTimeString(data.updateTime),
     };
 
     const existingOrder = await this.orderRepo.findOne({

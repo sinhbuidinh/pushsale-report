@@ -1,9 +1,8 @@
+import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  CreateDateColumn,
-} from 'typeorm';
+  EntityCreatedAtColumn,
+  EntityUpdatedAtColumn,
+} from '../common/entity-timestamps';
 import { SyncStatus, SyncTriggerSource } from '@sync-project/shared';
 
 @Entity()
@@ -11,8 +10,11 @@ export class SyncLog {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @CreateDateColumn()
-  created_at: Date;
+  @EntityCreatedAtColumn()
+  created_at: Date | null;
+
+  @EntityUpdatedAtColumn()
+  updated_at: Date | null;
 
   @Column({ type: 'date' })
   sync_date: string;

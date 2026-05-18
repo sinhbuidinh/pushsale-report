@@ -9,8 +9,11 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
 
@@ -47,6 +50,26 @@ export class ProductsController {
         status: false,
         error: (error as Error).message,
       };
+    }
+  }
+
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  async importProducts(
+    @UploadedFile() file?: { buffer: Buffer; originalname?: string },
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('file is required (.xls)');
+    }
+    const name = (file.originalname ?? '').toLowerCase();
+    if (!name.endsWith('.xls') && !name.endsWith('.xlsx')) {
+      throw new BadRequestException('Only .xls or .xlsx files are supported');
+    }
+    try {
+      const data = await this.productsService.importProductsFromXls(file.buffer);
+      return { status: true, data };
+    } catch (error) {
+      return { status: false, error: (error as Error).message };
     }
   }
 

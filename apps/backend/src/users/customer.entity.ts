@@ -1,4 +1,8 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  EntityCreatedAtColumn,
+  EntityUpdatedAtColumn,
+} from '../common/entity-timestamps';
 
 @Entity()
 export class Customer {
@@ -16,4 +20,10 @@ export class Customer {
 
   @Column()
   type: string;
+
+  @EntityCreatedAtColumn()
+  created_at: Date | null;
+
+  @EntityUpdatedAtColumn()
+  updated_at: Date | null;
 }

@@ -1,17 +1,24 @@
 import {
   Column,
-  CreateDateColumn,
   Entity,
   Index,
   ManyToOne,
   PrimaryGeneratedColumn,
   JoinColumn,
-  UpdateDateColumn,
 } from 'typeorm';
+import {
+  EntityCreatedAtColumn,
+  EntityUpdatedAtColumn,
+} from '../common/entity-timestamps';
 import { Product } from '../products/product.entity';
 
 @Entity()
-@Index(['sync_date', 'ad_account_id'])
+@Index('UQ_ad_account_daily_spend_for_product', [
+  'sync_date',
+  'ad_account_id',
+  'product_id',
+  'product_code',
+], { unique: true })
 @Index(['sync_date', 'product_id'])
 export class FacebookAdsDailyCost {
   @PrimaryGeneratedColumn()
@@ -31,7 +38,7 @@ export class FacebookAdsDailyCost {
   product: Product | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  product_item_code: string | null;
+  product_code: string | null;
 
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   spend: number;
@@ -48,9 +55,9 @@ export class FacebookAdsDailyCost {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
-  @CreateDateColumn()
-  created_at: Date;
+  @EntityCreatedAtColumn()
+  created_at: Date | null;
 
-  @UpdateDateColumn()
-  updated_at: Date;
+  @EntityUpdatedAtColumn()
+  updated_at: Date | null;
 }

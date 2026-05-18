@@ -7,6 +7,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Like, Repository } from 'typeorm';
 import { Product } from './product.entity';
 import { ProductAdaption } from './product-adaption.entity';
+import {
+  parseProductRowsFromXls,
+  type ProductImportResult,
+  type ProductImportRow,
+} from '../products/product-import.util';
+import {
+  calendarMonthBoundsForDate,
+  getAppTimeZone,
+} from '../common/app-timezone';
 
 export interface PatchProductPricesDto {
   cost_price: number;
@@ -237,5 +246,106 @@ export class ProductsService {
       throw new NotFoundException(`Product adaptation ${adaptionId} not found`);
     }
     return updated;
+  }
+
+  /**
+   * Imports rows from a Vietnamese product catalog .xls file.
+   * Upserts `product` by `item_code` and the current month's active `product_adaption`.
+   */
+  async importProductsFromXls(buffer: Buffer): Promise<ProductImportResult> {
+    const parsed = parseProductRowsFromXls(buffer);
+    const result: ProductImportResult = {
+      productsCreated: 0,
+      productsUpdated: 0,
+      adaptionsCreated: 0,
+      adaptionsUpdated: 0,
+      skipped: parsed.skipped,
+      errors: [...parsed.errors],
+    };
+
+    if (parsed.rows.length === 0) {
+      return result;
+    }
+
+    const tz = getAppTimeZone();
+    const { startStr, endStr, todayStr } = calendarMonthBoundsForDate(
+      new Date(),
+      tz,
+    );
+    const monthStartDate = calendarStrToUtcNoonDate(startStr);
+    const monthEndDate = calendarStrToUtcNoonDate(endStr);
+
+    for (const row of parsed.rows) {
+      try {
+        await this.upsertProductRow(row, {
+          monthStartDate,
+          monthEndDate,
+          todayStr,
+          result,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`Row ${row.rowNumber}: ${msg}`);
+      }
+    }
+
+    return result;
+  }
+
+  private async upsertProductRow(
+    row: ProductImportRow,
+    ctx: {
+      monthStartDate: Date;
+      monthEndDate: Date;
+      todayStr: string;
+      result: ProductImportResult;
+    },
+  ): Promise<void> {
+    let product = await this.productRepo.findOne({
+      where: { item_code: row.item_code },
+    });
+
+    if (product) {
+      await this.productRepo.update(product.id, {
+        item_name: row.item_name,
+        cost_price: row.cost_price,
+        weight_gram: row.weight_gram,
+      });
+      ctx.result.productsUpdated++;
+    } else {
+      product = await this.productRepo.save({
+        item_code: row.item_code,
+        item_name: row.item_name,
+        cost_price: row.cost_price,
+        selling_price: row.selling_price,
+        delivery_fee: 0,
+        weight_gram: row.weight_gram,
+      });
+      ctx.result.productsCreated++;
+    }
+
+    let adaption = await this.findAdaptionActiveOnCalendarDate(
+      product.id,
+      ctx.todayStr,
+    );
+
+    if (adaption) {
+      await this.adaptionRepo.update(adaption.id, {
+        cost_price: row.cost_price,
+        selling_price: row.selling_price,
+      });
+      ctx.result.adaptionsUpdated++;
+      return;
+    }
+
+    await this.adaptionRepo.save({
+      product_id: product.id,
+      start_date: ctx.monthStartDate,
+      end_date: ctx.monthEndDate,
+      cost_price: row.cost_price,
+      selling_price: row.selling_price,
+      delivery_fee: 0,
+    });
+    ctx.result.adaptionsCreated++;
   }
 }

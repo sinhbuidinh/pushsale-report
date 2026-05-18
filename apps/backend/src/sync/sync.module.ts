@@ -11,7 +11,9 @@ import { Order } from '../orders/order.entity';
 import { SyncLog } from './sync-log.entity';
 import { SyncLogRepository } from './sync-log.repository';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
+import { FacebookAdsInsightsSnapshot } from './facebook-ads-insights-snapshot.entity';
 import { FacebookAdsSyncService } from './facebook-ads-sync.service';
+import { AdsAccount } from '../users/ads-account.entity';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { FacebookAdsSyncService } from './facebook-ads-sync.service';
       Order,
       SyncLog,
       FacebookAdsDailyCost,
+      FacebookAdsInsightsSnapshot,
+      AdsAccount,
     ]),
   ],
   controllers: [SyncController],

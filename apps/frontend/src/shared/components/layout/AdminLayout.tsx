@@ -8,7 +8,8 @@ import {
   Dashboard as DashboardIcon, 
   People as PeopleIcon, 
   Inventory as InventoryIcon, 
-  Receipt as OrdersIcon, 
+  Receipt as OrdersIcon,
+  Campaign as CampaignIcon,
   Logout as LogoutIcon 
 } from '@mui/icons-material';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
@@ -44,6 +45,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { text: 'Users', icon: <PeopleIcon />, path: `/${PANEL_PREFIX}/users`, roles: ['admin', 'marketing', 'sale'] },
     { text: 'Products', icon: <InventoryIcon />, path: `/${PANEL_PREFIX}/products`, roles: ['admin'] },
     { text: 'Orders', icon: <OrdersIcon />, path: `/${PANEL_PREFIX}/orders`, roles: ['admin'] },
+    { text: 'Facebook Ads', icon: <CampaignIcon />, path: `/${PANEL_PREFIX}/facebook-ads`, roles: ['admin'] },
   ];
 
   return (

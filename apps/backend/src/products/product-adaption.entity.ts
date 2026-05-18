@@ -1,4 +1,8 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  EntityCreatedAtColumn,
+  EntityUpdatedAtColumn,
+} from '../common/entity-timestamps';
 
 @Entity()
 export class ProductAdaption {
@@ -22,4 +26,10 @@ export class ProductAdaption {
 
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   delivery_fee: number;
+
+  @EntityCreatedAtColumn()
+  created_at: Date | null;
+
+  @EntityUpdatedAtColumn()
+  updated_at: Date | null;
 }
