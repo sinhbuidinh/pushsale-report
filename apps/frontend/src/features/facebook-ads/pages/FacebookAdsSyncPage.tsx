@@ -24,6 +24,7 @@ import {
   Chip,
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import apiClient from '../../../shared/api/apiClient';
 
 interface MarketingUser {
@@ -36,6 +37,7 @@ interface AdsAccountSyncStatus {
   ad_account_id: string;
   ad_account_name: string | null;
   synced: boolean;
+  synced_at: string | null;
 }
 
 interface FacebookAdsSyncStatus {
@@ -61,6 +63,8 @@ interface FacebookAdsDailyCostRow {
   unmatched_ads_count: number;
   notes: string | null;
   can_resync: boolean;
+  can_normalize: boolean;
+  updated_at: string | null;
 }
 
 interface FacebookAdsDailyCostsResponse {
@@ -92,6 +96,9 @@ const FacebookAdsSyncPage = () => {
   const [resyncingAccountId, setResyncingAccountId] = useState<string | null>(
     null,
   );
+  const [normalizingAccountId, setNormalizingAccountId] = useState<
+    string | null
+  >(null);
 
   const hasBothInputs =
     marketingUserId.trim() !== '' && selectedDate.trim() !== '';
@@ -183,6 +190,31 @@ const FacebookAdsSyncPage = () => {
     },
   });
 
+  const normalizeMutation = useMutation({
+    mutationFn: async (adAccountId: string) => {
+      const response = await apiClient.post('/sync/facebook-ads/normalize', {
+        marketing_user_id: Number(marketingUserId),
+        ad_account_id: adAccountId,
+        date: selectedDate,
+      });
+      if (response.data.status) {
+        return response.data.data;
+      }
+      throw new Error(
+        response.data.error || 'Failed to normalize daily costs from snapshot',
+      );
+    },
+    onMutate: (adAccountId) => {
+      setNormalizingAccountId(adAccountId);
+    },
+    onSettled: () => {
+      setNormalizingAccountId(null);
+    },
+    onSuccess: () => {
+      invalidateFacebookAdsQueries();
+    },
+  });
+
   const resyncMutation = useMutation({
     mutationFn: async (adAccountId: string) => {
       const response = await apiClient.post('/sync/facebook-ads/resync', {
@@ -217,6 +249,10 @@ const FacebookAdsSyncPage = () => {
     resyncMutation.mutate(adAccountId);
   };
 
+  const handleNormalize = (adAccountId: string) => {
+    normalizeMutation.mutate(adAccountId);
+  };
+
   const selectedUser = marketingUsers?.find(
     (u) => String(u.user_id) === marketingUserId,
   );
@@ -245,6 +281,37 @@ const FacebookAdsSyncPage = () => {
     const name = row.ad_account_name?.trim();
     return name ? `${name} (act_${row.ad_account_id})` : `act_${row.ad_account_id}`;
   };
+
+  const formatSyncedAt = (iso: string | null | undefined) => {
+    if (!iso) {
+      return null;
+    }
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+  };
+
+  const formatAccountSyncStatus = (account: AdsAccountSyncStatus) => {
+    const syncedAtLabel = formatSyncedAt(account.synced_at);
+    if (account.synced) {
+      return syncedAtLabel
+        ? `Already synced · ${syncedAtLabel}`
+        : 'Already synced';
+    }
+    return 'Pending sync';
+  };
+
+  const latestSyncedAt = syncStatus?.ads_accounts.reduce<string | null>(
+    (latest, account) => {
+      if (!account.synced_at) {
+        return latest;
+      }
+      if (!latest || account.synced_at > latest) {
+        return account.synced_at;
+      }
+      return latest;
+    },
+    null,
+  );
 
   const dailyCostRows = dailyCosts?.rows ?? [];
   const isLoadingCosts = dailyCostsLoading || dailyCostsFetching;
@@ -284,6 +351,7 @@ const FacebookAdsSyncPage = () => {
                 setMarketingUserId(e.target.value);
                 syncMutation.reset();
                 resyncMutation.reset();
+                normalizeMutation.reset();
               }}
               disabled={usersLoading}
             >
@@ -309,6 +377,7 @@ const FacebookAdsSyncPage = () => {
               setSelectedDate(e.target.value);
               syncMutation.reset();
               resyncMutation.reset();
+              normalizeMutation.reset();
             }}
             slotProps={{ inputLabel: { shrink: true } }}
             size="small"
@@ -372,7 +441,7 @@ const FacebookAdsSyncPage = () => {
                 <ListItem key={account.ad_account_id} disableGutters sx={{ py: 0.25 }}>
                   <ListItemText
                     primary={formatAccountLabel(account)}
-                    secondary={account.synced ? 'Already synced' : 'Pending sync'}
+                    secondary={formatAccountSyncStatus(account)}
                     slotProps={{
                       primary: { variant: 'body2' },
                       secondary: {
@@ -407,6 +476,9 @@ const FacebookAdsSyncPage = () => {
             Facebook ads data for {syncStatus?.display_name} on{' '}
             {syncStatus?.sync_date} is already synced for all{' '}
             {syncStatus?.total_accounts_count} ad account(s).
+            {formatSyncedAt(latestSyncedAt) ? (
+              <> Last synced: {formatSyncedAt(latestSyncedAt)}.</>
+            ) : null}
           </Alert>
         ) : null}
 
@@ -469,6 +541,19 @@ const FacebookAdsSyncPage = () => {
             {(resyncMutation.error as Error).message}
           </Alert>
         ) : null}
+
+        {normalizeMutation.isSuccess ? (
+          <Alert severity="success" sx={{ mt: 2 }}>
+            {(normalizeMutation.data as { message?: string })?.message ??
+              'Daily costs normalized from snapshot successfully.'}
+          </Alert>
+        ) : null}
+
+        {normalizeMutation.isError ? (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {(normalizeMutation.error as Error).message}
+          </Alert>
+        ) : null}
       </Paper>
 
       {hasBothInputs ? (
@@ -499,11 +584,22 @@ const FacebookAdsSyncPage = () => {
                     <TableCell align="right">Matched ads</TableCell>
                     <TableCell align="right">Unmatched ads</TableCell>
                     <TableCell>Notes</TableCell>
+                    <TableCell>Last synced</TableCell>
                     <TableCell align="center">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {dailyCostRows.map((row) => (
+                  {(() => {
+                    const normalizeButtonShown = new Set<string>();
+                    return dailyCostRows.map((row) => {
+                      const showNormalize =
+                        row.can_normalize &&
+                        !normalizeButtonShown.has(row.ad_account_id);
+                      if (showNormalize) {
+                        normalizeButtonShown.add(row.ad_account_id);
+                      }
+
+                      return (
                     <TableRow
                       key={row.id}
                       sx={
@@ -538,32 +634,72 @@ const FacebookAdsSyncPage = () => {
                           {row.notes ?? '—'}
                         </Typography>
                       </TableCell>
+                      <TableCell>
+                        <Typography variant="caption" color="text.secondary">
+                          {formatSyncedAt(row.updated_at) ?? '—'}
+                        </Typography>
+                      </TableCell>
                       <TableCell align="center">
-                        {row.can_resync ? (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={
-                              resyncingAccountId === row.ad_account_id ? (
-                                <CircularProgress size={14} />
-                              ) : (
-                                <SyncIcon fontSize="small" />
-                              )
-                            }
-                            disabled={
-                              resyncMutation.isPending ||
-                              syncMutation.isPending
-                            }
-                            onClick={() => handleResync(row.ad_account_id)}
-                          >
-                            Re-sync
-                          </Button>
-                        ) : (
-                          '—'
-                        )}
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 0.5,
+                            alignItems: 'center',
+                          }}
+                        >
+                          {row.can_resync ? (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={
+                                resyncingAccountId === row.ad_account_id ? (
+                                  <CircularProgress size={14} />
+                                ) : (
+                                  <SyncIcon fontSize="small" />
+                                )
+                              }
+                              disabled={
+                                resyncMutation.isPending ||
+                                syncMutation.isPending ||
+                                normalizeMutation.isPending
+                              }
+                              onClick={() => handleResync(row.ad_account_id)}
+                            >
+                              Re-sync
+                            </Button>
+                          ) : null}
+                          {showNormalize ? (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="secondary"
+                              startIcon={
+                                normalizingAccountId === row.ad_account_id ? (
+                                  <CircularProgress size={14} />
+                                ) : (
+                                  <AutoFixHighIcon fontSize="small" />
+                                )
+                              }
+                              disabled={
+                                normalizeMutation.isPending ||
+                                syncMutation.isPending ||
+                                resyncMutation.isPending
+                              }
+                              onClick={() =>
+                                handleNormalize(row.ad_account_id)
+                              }
+                            >
+                              Normalize
+                            </Button>
+                          ) : null}
+                          {!row.can_resync && !showNormalize ? '—' : null}
+                        </Box>
                       </TableCell>
                     </TableRow>
-                  ))}
+                      );
+                    });
+                  })()}
                 </TableBody>
               </Table>
             </TableContainer>

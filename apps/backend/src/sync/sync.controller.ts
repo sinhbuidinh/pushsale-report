@@ -164,6 +164,59 @@ export class SyncController {
     }
   }
 
+  @Post('facebook-ads/normalize')
+  async normalizeFacebookAdsDailyCosts(
+    @Body('marketing_user_id') marketingUserIdRaw?: number | string,
+    @Body('ad_account_id') adAccountId?: string,
+    @Body('date') date?: string,
+  ) {
+    const marketingUserId = Number(marketingUserIdRaw);
+    if (
+      marketingUserIdRaw == null ||
+      marketingUserIdRaw === '' ||
+      !Number.isFinite(marketingUserId)
+    ) {
+      throw new BadRequestException({
+        status: false,
+        error: 'marketing_user_id is required and must be a number.',
+      });
+    }
+    const accountId = adAccountId?.trim();
+    if (!accountId || !META_AD_ACCOUNT_ID_NUMERIC_RE.test(accountId)) {
+      throw new BadRequestException({
+        status: false,
+        error:
+          'ad_account_id is required and must be a numeric Meta ad account id (digits only).',
+      });
+    }
+    if (date && !YMD_QUERY_RE.test(date)) {
+      throw new BadRequestException({
+        status: false,
+        error: 'Invalid date format. Expected YYYY-MM-DD.',
+      });
+    }
+    try {
+      const data =
+        await this.facebookAdsSyncService.normalizeDailyCostsFromSnapshot({
+          marketingUserId,
+          adAccountId: accountId,
+          date,
+        });
+      return { status: true, data };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException({
+        status: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to normalize Facebook ads daily costs.',
+      });
+    }
+  }
+
   @Post('facebook-ads/resync')
   async resyncFacebookAdsAccount(
     @Body('marketing_user_id') marketingUserIdRaw?: number | string,
@@ -201,6 +254,7 @@ export class SyncController {
           marketingUserId,
           adAccountId: accountId,
           date,
+          filterIsActiveCampaign: false,
         });
       return { status: true, data };
     } catch (error) {
@@ -287,6 +341,7 @@ export class SyncController {
         const result = await this.facebookAdsSyncService.syncDailyProductCosts({
           date,
           adAccountId: requestedAccountId,
+          filterIsActiveCampaign: false,
         });
         return {
           status: true,
@@ -314,6 +369,7 @@ export class SyncController {
         const result = await this.facebookAdsSyncService.syncDailyProductCosts({
           date,
           adAccountId: row.ad_account_id,
+          filterIsActiveCampaign: false,
         });
         results.push(result);
       }
@@ -347,6 +403,7 @@ export class SyncController {
   async getFacebookAdsInsights(
     @Query('ad_account_id') adAccountId?: string,
     @Query('date') date?: string,
+    @Query('filter_is_active_campaign') filterIsActiveCampaign?: boolean,
   ) {
     const id = adAccountId?.trim();
     if (!id || !META_AD_ACCOUNT_ID_NUMERIC_RE.test(id)) {
@@ -368,6 +425,7 @@ export class SyncController {
         await this.facebookAdsSyncService.getAdInsightsForAccountAndDate({
           adAccountId: id,
           date,
+          filterIsActiveCampaign: filterIsActiveCampaign ?? false,
         });
       return {
         status: true,

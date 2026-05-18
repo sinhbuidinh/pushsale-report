@@ -4,7 +4,7 @@ import type { AxiosResponse } from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   getAppTimeZone,
   yesterdayCalendarInZone,
@@ -15,6 +15,11 @@ import { User } from '../users/user.entity';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
 import { FacebookAdsInsightsSnapshot } from './facebook-ads-insights-snapshot.entity';
 import { generateGraphUrl } from 'src/common/helpers';
+import {
+  CAMPAIGN_NAME_PIPE_SEPARATOR,
+  CAMPAIGN_NAME_SUFFIX_SEPARATOR,
+  extractItemCodeKeyFromCampaignName,
+} from './facebook-ads-campaign-name.util';
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION?.trim() || 'v23.0';
@@ -78,6 +83,7 @@ interface SyncFacebookAdsInput {
   date?: string;
   /** Meta ad account id: digits only (no act_ prefix). */
   adAccountId: string;
+  filterIsActiveCampaign: boolean;
 }
 
 type SpendBucket = {
@@ -160,12 +166,20 @@ export class FacebookAdsSyncService {
       await this.resolveMarketingUserWithAdsAccounts(marketingUserId);
     const syncDate = this.resolveSyncDate(date);
 
+    const adAccountIds = adsAccounts.map((account) => account.ad_account_id);
+    const syncedAtByAccountId =
+      await this.getLatestDailyCostUpdatedAtByAdAccount(syncDate, adAccountIds);
+
     const ads_accounts = await Promise.all(
-      adsAccounts.map(async (account) => ({
-        ad_account_id: account.ad_account_id,
-        ad_account_name: account.ad_account_name,
-        synced: await this.isAlreadySynced(syncDate, account.ad_account_id),
-      })),
+      adsAccounts.map(async (account) => {
+        const syncedAt = syncedAtByAccountId.get(account.ad_account_id);
+        return {
+          ad_account_id: account.ad_account_id,
+          ad_account_name: account.ad_account_name,
+          synced: await this.isAlreadySynced(syncDate, account.ad_account_id),
+          synced_at: syncedAt?.toISOString() ?? null,
+        };
+      }),
     );
 
     const syncedAccountsCount = ads_accounts.filter((a) => a.synced).length;
@@ -206,6 +220,7 @@ export class FacebookAdsSyncService {
       const result = await this.syncDailyProductCosts({
         date: status.sync_date,
         adAccountId: account.ad_account_id,
+        filterIsActiveCampaign: false,
       });
       results.push(result);
     }
@@ -272,6 +287,17 @@ export class FacebookAdsSyncService {
       .addOrderBy('cost.spend', 'DESC')
       .getMany();
 
+    const snapshots = await this.insightsSnapshotRepo.find({
+      where: { sync_date: syncDate, ad_account_id: In(adAccountIds) },
+      select: ['ad_account_id', 'response'],
+    });
+    const canNormalizeByAccountId = new Map(
+      snapshots.map((snapshot) => [
+        snapshot.ad_account_id,
+        this.hasNonEmptySnapshotResponse(snapshot.response),
+      ]),
+    );
+
     return {
       marketing_user_id: marketingUserId,
       display_name: user.display_name,
@@ -289,7 +315,64 @@ export class FacebookAdsSyncService {
         unmatched_ads_count: row.unmatched_ads_count,
         notes: row.notes,
         can_resync: row.unmatched_ads_count > 0,
+        can_normalize:
+          canNormalizeByAccountId.get(row.ad_account_id) ?? false,
+        updated_at: row.updated_at?.toISOString() ?? null,
       })),
+    };
+  }
+
+  /**
+   * Rebuild facebook_ads_daily_cost rows from a stored insights snapshot
+   * (no Meta API fetch).
+   */
+  async normalizeDailyCostsFromSnapshot(input: {
+    marketingUserId: number;
+    adAccountId: string;
+    date?: string;
+  }) {
+    const { user, adsAccounts } =
+      await this.resolveMarketingUserWithAdsAccounts(input.marketingUserId);
+    const adAccountId = this.requireNumericAdAccountId(input.adAccountId);
+    const owned = adsAccounts.some(
+      (account) => account.ad_account_id === adAccountId,
+    );
+    if (!owned) {
+      throw new Error('Ad account is not linked to this marketing user.');
+    }
+
+    const syncDate = this.resolveSyncDate(input.date);
+    const snapshot = await this.insightsSnapshotRepo.findOne({
+      where: { sync_date: syncDate, ad_account_id: adAccountId },
+    });
+    if (!snapshot) {
+      throw new Error(
+        'No insights snapshot found for this ad account and date.',
+      );
+    }
+    if (!this.hasNonEmptySnapshotResponse(snapshot.response)) {
+      throw new Error(
+        'Insights snapshot has no response data to normalize.',
+      );
+    }
+
+    const insights = snapshot.response as FacebookAdInsight[];
+
+    this.logger.log(
+      `Normalizing daily costs from snapshot for ${syncDate} on ${adAccountId}: ${insights.length} ads`,
+    );
+
+    const result = await this.persistDailyCostsFromInsights(
+      syncDate,
+      adAccountId,
+      insights,
+    );
+
+    return {
+      message: `Normalized daily costs from snapshot for ${user.display_name} on ${syncDate} (act_${adAccountId}).`,
+      marketing_user_id: input.marketingUserId,
+      display_name: user.display_name,
+      ...result,
     };
   }
 
@@ -297,6 +380,7 @@ export class FacebookAdsSyncService {
   async resyncAdAccountForMarketingUser(input: {
     marketingUserId: number;
     adAccountId: string;
+    filterIsActiveCampaign: boolean;
     date?: string;
   }) {
     const { user, adsAccounts } =
@@ -313,6 +397,7 @@ export class FacebookAdsSyncService {
     const result = await this.syncDailyProductCosts({
       date: syncDate,
       adAccountId,
+      filterIsActiveCampaign: input.filterIsActiveCampaign,
     });
 
     return {
@@ -333,6 +418,31 @@ export class FacebookAdsSyncService {
     return count > 0;
   }
 
+  /** Latest `updated_at` per ad account for a sync date (from daily cost rows). */
+  private async getLatestDailyCostUpdatedAtByAdAccount(
+    syncDate: string,
+    adAccountIds: string[],
+  ): Promise<Map<string, Date>> {
+    if (adAccountIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.dailyCostRepo
+      .createQueryBuilder('cost')
+      .select('cost.ad_account_id', 'ad_account_id')
+      .addSelect('MAX(cost.updated_at)', 'synced_at')
+      .where('cost.sync_date = :syncDate', { syncDate })
+      .andWhere('cost.ad_account_id IN (:...adAccountIds)', { adAccountIds })
+      .groupBy('cost.ad_account_id')
+      .getRawMany<{ ad_account_id: string; synced_at: Date | string | null }>();
+
+    return new Map(
+      rows
+        .filter((row) => row.synced_at != null)
+        .map((row) => [row.ad_account_id, new Date(row.synced_at as Date)]),
+    );
+  }
+
   async syncDailyProductCosts(input: SyncFacebookAdsInput) {
     const syncDate = this.resolveSyncDate(input.date);
     const appId = process.env.META_APP_ID?.trim();
@@ -350,11 +460,39 @@ export class FacebookAdsSyncService {
     const insights = await this.fetchAdInsightsForDate(
       syncDate,
       adAccountId,
+      input.filterIsActiveCampaign,
       accessToken,
     );
 
-    // Step-2: Derive item_code candidates from insight campaign_name ("item_code | …"); only load those products.
+    const result = await this.persistDailyCostsFromInsights(
+      syncDate,
+      adAccountId,
+      insights,
+    );
+
+    this.logger.log(
+      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insights.length} ads, ${result.mapped_products_count} mapped products, total spend ${result.total_spend.toFixed(2)} ${result.currency}`,
+    );
+
+    return {
+      app_id: appId,
+      ...result,
+    };
+  }
+
+  private hasNonEmptySnapshotResponse(response: unknown): boolean {
+    return Array.isArray(response) && response.length > 0;
+  }
+
+  private async persistDailyCostsFromInsights(
+    syncDate: string,
+    adAccountId: string,
+    insights: FacebookAdInsight[],
+  ) {
+    // Step-1: Collect distinct item_code keys from insights.
     const itemCodeKeys = this.collectDistinctItemCodeKeysFromInsights(insights);
+
+    // Step-2: Find products by item_code keys.
     const products = await this.findProductsByItemCodeKeys(itemCodeKeys);
 
     // Step-3: Map normalized item_code -> matcher for exact lookup when aggregating.
@@ -377,7 +515,7 @@ export class FacebookAdsSyncService {
       unmatched_ads_count: bucket.unmatchedAdsCount,
       notes:
         bucket.productId == null
-          ? 'Campaign name did not match a known product item_code (expected "item_code | …").'
+          ? `Campaign name did not match a known product item_code (expected "item_code${CAMPAIGN_NAME_SUFFIX_SEPARATOR}…" or "item_code ${CAMPAIGN_NAME_PIPE_SEPARATOR} …").`
           : null,
     }));
 
@@ -402,7 +540,6 @@ export class FacebookAdsSyncService {
     return {
       sync_date: syncDate,
       ad_account_id: adAccountId,
-      app_id: appId,
       fetched_ads_count: insights.length,
       rows_persisted: payload.length,
       mapped_products_count: mappedRows.length,
@@ -430,6 +567,7 @@ export class FacebookAdsSyncService {
   async getAdInsightsForAccountAndDate(input: {
     adAccountId: string;
     date?: string;
+    filterIsActiveCampaign: boolean;
   }) {
     const appId = process.env.META_APP_ID?.trim();
     const accessToken = process.env.META_ACCESS_TOKEN?.trim();
@@ -439,11 +577,13 @@ export class FacebookAdsSyncService {
     if (!accessToken) {
       throw new Error('META_ACCESS_TOKEN is missing');
     }
+
     const syncDate = this.resolveSyncDate(input.date);
     const adAccountId = this.requireNumericAdAccountId(input.adAccountId);
     const insights = await this.fetchAdInsightsForDate(
       syncDate,
       adAccountId,
+      input.filterIsActiveCampaign,
       accessToken,
     );
     return {
@@ -530,30 +670,12 @@ export class FacebookAdsSyncService {
     return cleaned;
   }
 
-  /**
-   * Campaign names use `item_code | …`. Returns a lowercase key for DB lookup, or "" if empty.
-   * If there is no `|`, the whole trimmed name is used (exact match to `product.item_code`).
-   */
-  private extractItemCodeKeyFromCampaignName(
-    campaignName: string | undefined,
-  ): string {
-    const raw = (campaignName ?? '').trim();
-    if (!raw) {
-      return '';
-    }
-
-    const pipeIdx = raw.indexOf('|');
-    const segment = pipeIdx >= 0 ? raw.slice(0, pipeIdx).trim() : raw;
-
-    return segment.toLowerCase();
-  }
-
   private collectDistinctItemCodeKeysFromInsights(
     insights: FacebookAdInsight[],
   ): string[] {
     const keys = new Set<string>();
     for (const row of insights) {
-      const key = this.extractItemCodeKeyFromCampaignName(row.campaign_name);
+      const key = extractItemCodeKeyFromCampaignName(row.campaign_name);
       if (key) {
         keys.add(key);
       }
@@ -607,9 +729,7 @@ export class FacebookAdsSyncService {
         continue;
       }
 
-      const codeKey = this.extractItemCodeKeyFromCampaignName(
-        row.campaign_name,
-      );
+      const codeKey = extractItemCodeKeyFromCampaignName(row.campaign_name);
       const matched = codeKey ? matcherByItemCodeKey.get(codeKey) : undefined;
       const key = matched ? String(matched.id) : unmatchedKey;
       const bucket =
@@ -637,6 +757,7 @@ export class FacebookAdsSyncService {
   private async fetchAdInsightsForDate(
     syncDate: string,
     adAccountId: string,
+    filterIsActiveCampaign: boolean,
     accessToken: string,
   ): Promise<FacebookAdInsight[]> {
     const allRows: FacebookAdInsight[] = [];
@@ -682,6 +803,16 @@ export class FacebookAdsSyncService {
       ...(appSecretProof ? { appsecret_proof: appSecretProof } : {}),
     };
 
+    if (filterIsActiveCampaign === true) {
+      params['filtering'] = JSON.stringify([
+        {
+          field: 'campaign.effective_status',
+          operator: 'IN',
+          value: ['ACTIVE'],
+        },
+      ]);
+    }
+
     let nextUrl: string | null = graphBase;
     let page = 1;
     while (nextUrl) {
@@ -689,7 +820,7 @@ export class FacebookAdsSyncService {
       // next request param will be include into url already
       const requestConfig = { params: page === 1 ? params : undefined };
       this.logger.log(
-        '-- fetchAdInsightsForDate: ' +
+        '-- Try fetch AdInsights by: ' +
           (page === 1
             ? generateGraphUrl(nextUrl, params)
             : nextUrl),
@@ -721,7 +852,7 @@ export class FacebookAdsSyncService {
 
   private sanitizeInsightsRequestParams(
     nextUrl: string,
-    params: Record<string, string | number | undefined>,
+    params: Record<string, unknown>,
   ): Record<string, unknown> {
     const out: Record<string, unknown> = { ...params };
     out.nextUrl = nextUrl;
