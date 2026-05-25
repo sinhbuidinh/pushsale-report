@@ -4,6 +4,7 @@ import {
   ListItem, ListItemButton, ListItemIcon, ListItemText, 
   CssBaseline, Button, Container 
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { 
   Dashboard as DashboardIcon, 
   People as PeopleIcon, 
@@ -12,7 +13,7 @@ import {
   Campaign as CampaignIcon,
   Logout as LogoutIcon 
 } from '@mui/icons-material';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   clearAuthStorage,
   getStoredUser,
@@ -28,6 +29,7 @@ interface AdminLayoutProps {
 const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const user = getStoredUser();
   const navigate = useNavigate();
+  const location = useLocation();
 
   if (!user?.type || typeof user.type !== 'string') {
     return <Navigate to={`/${PANEL_PREFIX}`} replace />;
@@ -75,14 +77,40 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <Toolbar />
         <Box sx={{ overflow: 'auto' }}>
           <List>
-            {menuItems.filter((item) => item.roles.includes(userType)).map((item) => (
-              <ListItem key={item.text} disablePadding>
-                <ListItemButton component={Link} to={item.path}>
-                  <ListItemIcon>{item.icon}</ListItemIcon>
-                  <ListItemText primary={item.text} />
-                </ListItemButton>
-              </ListItem>
-            ))}
+            {menuItems.filter((item) => item.roles.includes(userType)).map((item) => {
+              const isSelected =
+                location.pathname === item.path ||
+                location.pathname.startsWith(`${item.path}/`);
+              return (
+                <ListItem key={item.text} disablePadding>
+                  <ListItemButton
+                    component={Link}
+                    to={item.path}
+                    selected={isSelected}
+                    sx={(theme) => ({
+                      '&.Mui-selected': {
+                        backgroundColor: alpha(theme.palette.primary.main, 0.12),
+                        borderLeft: `4px solid ${theme.palette.primary.main}`,
+                        pl: 'calc(16px - 4px)',
+                        '& .MuiListItemIcon-root': {
+                          color: theme.palette.primary.main,
+                        },
+                        '& .MuiListItemText-primary': {
+                          color: theme.palette.primary.main,
+                          fontWeight: 600,
+                        },
+                        '&:hover': {
+                          backgroundColor: alpha(theme.palette.primary.main, 0.18),
+                        },
+                      },
+                    })}
+                  >
+                    <ListItemIcon>{item.icon}</ListItemIcon>
+                    <ListItemText primary={item.text} />
+                  </ListItemButton>
+                </ListItem>
+              );
+            })}
           </List>
         </Box>
       </Drawer>

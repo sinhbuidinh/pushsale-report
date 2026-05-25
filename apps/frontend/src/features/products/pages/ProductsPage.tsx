@@ -29,7 +29,6 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
 import apiClient from '../../../shared/api/apiClient';
-import { useDebounce } from '../../../shared/hooks/useDebounce';
 
 /**
  * One row per adaptation range, or a single row per product with no adaptations yet
@@ -58,8 +57,13 @@ const ProductsPage = () => {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const debouncedSearch = useDebounce(search, 500);
+
+  const handleSearch = () => {
+    setSearch(searchInput);
+    setPage(1);
+  };
 
   const [editProduct, setEditProduct] = useState<ProductListRow | null>(null);
   const [editCostPrice, setEditCostPrice] = useState('');
@@ -68,9 +72,9 @@ const ProductsPage = () => {
   const [editEndDate, setEditEndDate] = useState('');
 
   const { data, isLoading, error } = useQuery<ProductsResponse>({
-    queryKey: ['products', page, limit, debouncedSearch],
+    queryKey: ['products', page, limit, search],
     queryFn: async () => {
-      const response = await apiClient.get(`/products?page=${page}&limit=${limit}&search=${debouncedSearch}`);
+      const response = await apiClient.get(`/products?page=${page}&limit=${limit}&search=${search}`);
       if (response.data.status) {
         return response.data.data;
       }
@@ -192,10 +196,12 @@ const ProductsPage = () => {
           <TextField
             size="small"
             placeholder="Search item code or name..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSearch();
+              }
             }}
             slotProps={{
               input: {
@@ -208,6 +214,9 @@ const ProductsPage = () => {
             }}
             sx={{ width: 300 }}
           />
+          <Button variant="contained" onClick={handleSearch}>
+            Search
+          </Button>
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Per Page</InputLabel>
             <Select
