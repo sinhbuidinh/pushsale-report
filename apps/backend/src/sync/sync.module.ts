@@ -8,6 +8,7 @@ import { User } from '../users/user.entity';
 import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
+import { OrderDetail } from '../orders/order-detail.entity';
 import { SyncLog } from './sync-log.entity';
 import { SyncLogRepository } from './sync-log.repository';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
@@ -24,6 +25,7 @@ import { AdsAccount } from '../users/ads-account.entity';
       Customer,
       ProductAdaption,
       Order,
+      OrderDetail,
       SyncLog,
       FacebookAdsDailyCost,
       FacebookAdsInsightsSnapshot,

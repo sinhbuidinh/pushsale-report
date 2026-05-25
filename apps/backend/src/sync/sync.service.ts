@@ -15,6 +15,7 @@ import { User } from '../users/user.entity';
 import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
+import { OrderDetail } from '../orders/order-detail.entity';
 import {
   PushSaleTypeDate,
   SyncStatus,
@@ -25,7 +26,10 @@ import {
   getAppTimeZone,
   yesterdayCalendarInZone,
 } from '../common/app-timezone';
-import { httpErrorMessage } from '../common/http-error.util';
+import {
+  httpErrorMessage,
+  isRetryableHttpError,
+} from '../common/http-error.util';
 import { HttpRetryService } from '../common/http-retry.service';
 import { PUSHSALE_REQUEST_INTERVAL_MS } from '../common/pushsale-request-interval';
 import {
@@ -55,6 +59,9 @@ const PUSHSALE_RETRYABLE_ERROR_SNIPPETS: readonly string[] = [
   'socket hang up',
   '429',
   'too many requests',
+  // PushSale body-level errorCode returned with HTTP 200 + successful=false
+  // when the caller exceeds their min-interval throttle.
+  'time_limit',
 ];
 
 interface PushSaleGetOrderResponseBody {
@@ -68,7 +75,9 @@ interface PushSaleOrderDetail {
   itemCode: string;
   itemName: string;
   weightGram?: number;
+  quantity?: number;
   price?: number;
+  totalPrice?: number;
 }
 
 interface PushSaleOrderPayload {
@@ -122,6 +131,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     private adaptionRepo: Repository<ProductAdaption>,
     @InjectRepository(Order)
     private orderRepo: Repository<Order>,
+    @InjectRepository(OrderDetail)
+    private orderDetailRepo: Repository<OrderDetail>,
     private syncLogRepo: SyncLogRepository,
     private readonly httpRetryService: HttpRetryService,
   ) {}
@@ -240,36 +251,53 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           .update(`${apiToken}_${pageIndex}_${typeDate}`)
           .digest('hex');
 
-        const {
-          response,
-          durationMs,
-          requestStartedAt: pageRequestStartedAt,
-        } = await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
-          `${apiUrl}/GetOrderByConditions`,
-          {
-            clientId,
-            secureToken,
-            pageIndex,
-            pageSize: 100,
-            fromDate,
-            toDate,
-            typeDate,
-            isIncludeDetail: 1,
-          },
-          PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
-        );
+        // Per-page retry loop: re-issues the same request when PushSale returns
+        // a retryable body-level errorCode (e.g. "time_limit") in addition to
+        // the transport-level retries handled inside postJsonWithRetry.
+        let results: unknown[] | undefined;
+        let pageRequestStartedAt = 0;
+        for (;;) {
+          try {
+            const attempt =
+              await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
+                `${apiUrl}/GetOrderByConditions`,
+                {
+                  clientId,
+                  secureToken,
+                  pageIndex,
+                  pageSize: 100,
+                  fromDate,
+                  toDate,
+                  typeDate,
+                  isIncludeDetail: 1,
+                },
+                PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
+              );
+            pageRequestStartedAt = attempt.requestStartedAt;
 
-        const httpDur = durationPartsFromMs(durationMs);
-        this.logger.log(
-          `GetOrderByConditions for ${dateStr} page ${currentPage}: HTTP round-trip ${httpDur.ms} ms (${httpDur.sec} s)`,
-        );
+            const httpDur = durationPartsFromMs(attempt.durationMs);
+            this.logger.log(
+              `GetOrderByConditions for ${dateStr} page ${currentPage}: HTTP round-trip ${httpDur.ms} ms (${httpDur.sec} s)`,
+            );
 
-        const resData = response.data;
-        if (resData && resData.successful === false) {
-          throw new Error(`${resData.errorCode}: ${resData.errorMessage}`);
+            const resData = attempt.response.data;
+            if (resData && resData.successful === false) {
+              throw new Error(
+                `${resData.errorCode}: ${resData.errorMessage}`,
+              );
+            }
+            results = resData?.result;
+            break;
+          } catch (err) {
+            if (!isRetryableHttpError(err, PUSHSALE_RETRYABLE_ERROR_SNIPPETS)) {
+              throw err;
+            }
+            this.logger.warn(
+              `Page ${currentPage} for ${dateStr} retryable error: ${httpErrorMessage(err)}. Waiting ${PUSHSALE_REQUEST_INTERVAL_MS} ms before retry.`,
+            );
+            await this.sleepMs(PUSHSALE_REQUEST_INTERVAL_MS);
+          }
         }
-
-        const results = resData?.result;
 
         if (!results || results.length === 0) {
           const pageDur = durationPartsSince(pageHandledStartedAt);
@@ -468,10 +496,35 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const existingOrder = await this.orderRepo.findOne({
       where: { order_number: orderPayload.order_number },
     });
-    if (existingOrder) {
-      await this.orderRepo.save({ id: existingOrder.id, ...orderPayload });
-    } else {
-      await this.orderRepo.save(orderPayload);
+    const savedOrder = existingOrder
+      ? await this.orderRepo.save({ id: existingOrder.id, ...orderPayload })
+      : await this.orderRepo.save(orderPayload);
+
+    // Replace order_details with a fresh snapshot from the PushSale payload.
+    // PushSale is the source of truth for the line items, so on every sync we
+    // drop the prior rows for this order and re-insert.
+    await this.orderDetailRepo
+      .createQueryBuilder()
+      .delete()
+      .where('order_id = :orderId', { orderId: savedOrder.id })
+      .execute();
+
+    const detailRows = (data.details || [])
+      .filter((d) => !!d.itemCode)
+      .map((d) =>
+        // build instances in memory
+        this.orderDetailRepo.create({
+          order: { id: savedOrder.id } as Order,
+          item_code: d.itemCode,
+          item_name: d.itemName,
+          quantity: d.quantity ?? 0,
+          price: d.price ?? 0,
+          total_price: d.totalPrice ?? 0,
+        }),
+      );
+    if (detailRows.length > 0) {
+      // one batched DB insert
+      await this.orderDetailRepo.save(detailRows);
     }
   }
 

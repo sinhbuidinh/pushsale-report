@@ -24,6 +24,10 @@ export class Product {
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   delivery_fee: number;
 
+  /** VAT percentage applied to this product, e.g. 6.5, 8.5. */
+  @Column({ type: 'decimal', precision: 5, scale: 2, default: 0 })
+  tax_value: number;
+
   @Column({ type: 'int', default: 0 })
   weight_gram: number;
 

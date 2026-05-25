@@ -20,6 +20,10 @@ import {
 export interface PatchProductPricesDto {
   cost_price: number;
   delivery_fee: number;
+  /** When provided, updates the adaption's selling_price in place. */
+  selling_price?: number;
+  /** Optional product-level VAT percentage update (e.g. 6.5, 8.5). */
+  tax_value?: number;
 }
 
 /** List row: one per adaptation, or one placeholder when the product has no adaptations yet. */
@@ -31,7 +35,10 @@ export interface ProductListRow {
   start_date: string | null;
   end_date: string | null;
   cost_price: number;
+  selling_price: number;
   delivery_fee: number;
+  /** Product-level VAT percentage, e.g. 6.5, 8.5. */
+  tax_value: number;
   weight_gram: number;
 }
 
@@ -40,6 +47,8 @@ export interface CreateProductAdaptionDto {
   end_date: string;
   cost_price: number;
   delivery_fee: number;
+  /** Optional product-level VAT percentage update (e.g. 6.5, 8.5). */
+  tax_value?: number;
 }
 
 function calendarDateStr(d: Date): string {
@@ -163,7 +172,9 @@ export class ProductsService {
           start_date: null,
           end_date: null,
           cost_price: Number(p.cost_price),
+          selling_price: Number(p.selling_price),
           delivery_fee: Number(p.delivery_fee),
+          tax_value: Number(p.tax_value),
           weight_gram: p.weight_gram,
         });
       } else {
@@ -177,7 +188,9 @@ export class ProductsService {
             start_date: startStr,
             end_date: endStr,
             cost_price: Number(a.cost_price),
+            selling_price: Number(a.selling_price),
             delivery_fee: Number(a.delivery_fee),
+            tax_value: Number(p.tax_value),
             weight_gram: p.weight_gram,
           });
         }
@@ -213,6 +226,10 @@ export class ProductsService {
       throw new BadRequestException('start_date must be on or before end_date');
     }
 
+    if (dto.tax_value != null) {
+      await this.productRepo.update(productId, { tax_value: dto.tax_value });
+    }
+
     return this.adaptionRepo.save({
       product_id: productId,
       start_date: calendarStrToUtcNoonDate(dto.start_date),
@@ -234,10 +251,20 @@ export class ProductsService {
       throw new NotFoundException(`Product adaptation ${adaptionId} not found`);
     }
 
-    await this.adaptionRepo.update(adaptionId, {
+    const updatePayload: Partial<ProductAdaption> = {
       cost_price: dto.cost_price,
       delivery_fee: dto.delivery_fee,
-    });
+    };
+    if (dto.selling_price != null) {
+      updatePayload.selling_price = dto.selling_price;
+    }
+    await this.adaptionRepo.update(adaptionId, updatePayload);
+
+    if (dto.tax_value != null) {
+      await this.productRepo.update(adaption.product_id, {
+        tax_value: dto.tax_value,
+      });
+    }
 
     const updated = await this.adaptionRepo.findOne({
       where: { id: adaptionId },

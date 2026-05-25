@@ -42,7 +42,9 @@ interface ProductListRow {
   start_date: string | null;
   end_date: string | null;
   cost_price: string | number;
+  selling_price: string | number;
   delivery_fee: string | number;
+  tax_value: string | number;
   weight_gram: number;
 }
 
@@ -67,7 +69,9 @@ const ProductsPage = () => {
 
   const [editProduct, setEditProduct] = useState<ProductListRow | null>(null);
   const [editCostPrice, setEditCostPrice] = useState('');
+  const [editSellingPrice, setEditSellingPrice] = useState('');
   const [editDeliveryFee, setEditDeliveryFee] = useState('');
+  const [editTaxValue, setEditTaxValue] = useState('');
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
 
@@ -87,10 +91,14 @@ const ProductsPage = () => {
       adaption_id: number;
       cost_price: number;
       delivery_fee: number;
+      selling_price: number;
+      tax_value: number;
     }) => {
       const response = await apiClient.patch(`/products/adaptions/${payload.adaption_id}`, {
         cost_price: payload.cost_price,
         delivery_fee: payload.delivery_fee,
+        selling_price: payload.selling_price,
+        tax_value: payload.tax_value,
       });
       if (response.data.status) {
         return response.data.data;
@@ -110,12 +118,14 @@ const ProductsPage = () => {
       end_date: string;
       cost_price: number;
       delivery_fee: number;
+      tax_value: number;
     }) => {
       const response = await apiClient.post(`/products/${payload.product_id}/adaptions`, {
         start_date: payload.start_date,
         end_date: payload.end_date,
         cost_price: payload.cost_price,
         delivery_fee: payload.delivery_fee,
+        tax_value: payload.tax_value,
       });
       if (response.data.status) {
         return response.data.data;
@@ -132,7 +142,9 @@ const ProductsPage = () => {
     updateMutation.reset();
     createAdaptionMutation.reset();
     setEditCostPrice(String(row.cost_price ?? '0'));
+    setEditSellingPrice(String(row.selling_price ?? '0'));
     setEditDeliveryFee(String(row.delivery_fee ?? '0'));
+    setEditTaxValue(String(row.tax_value ?? '0'));
     setEditStartDate('');
     setEditEndDate('');
     setEditProduct(row);
@@ -141,8 +153,19 @@ const ProductsPage = () => {
   const handleSaveEdit = () => {
     if (!editProduct) return;
     const cost = parseFloat(editCostPrice);
+    const sell = parseFloat(editSellingPrice);
     const fee = parseFloat(editDeliveryFee);
-    if (!Number.isFinite(cost) || cost < 0 || !Number.isFinite(fee) || fee < 0) {
+    const tax = parseFloat(editTaxValue);
+    if (
+      !Number.isFinite(cost) ||
+      cost < 0 ||
+      !Number.isFinite(sell) ||
+      sell < 0 ||
+      !Number.isFinite(fee) ||
+      fee < 0 ||
+      !Number.isFinite(tax) ||
+      tax < 0
+    ) {
       return;
     }
     if (editProduct.adaption_id == null) {
@@ -157,6 +180,7 @@ const ProductsPage = () => {
         end_date: end,
         cost_price: cost,
         delivery_fee: fee,
+        tax_value: tax,
       });
       return;
     }
@@ -164,6 +188,8 @@ const ProductsPage = () => {
       adaption_id: editProduct.adaption_id,
       cost_price: cost,
       delivery_fee: fee,
+      selling_price: sell,
+      tax_value: tax,
     });
   };
 
@@ -246,7 +272,9 @@ const ProductsPage = () => {
               <TableCell>Item Name</TableCell>
               <TableCell>Date range</TableCell>
               <TableCell align="right">Cost Price</TableCell>
+              <TableCell align="right">Selling Price</TableCell>
               <TableCell align="right">Delivery Fee</TableCell>
+              <TableCell align="right">Tax (%)</TableCell>
               <TableCell align="right">Weight (g)</TableCell>
               <TableCell align="center" width={72}>
                 Edit
@@ -262,7 +290,9 @@ const ProductsPage = () => {
                 <TableCell>{row.item_name}</TableCell>
                 <TableCell>{formatRangeCell(row)}</TableCell>
                 <TableCell align="right">{Number(row.cost_price).toLocaleString()}</TableCell>
+                <TableCell align="right">{Number(row.selling_price ?? 0).toLocaleString()}</TableCell>
                 <TableCell align="right">{Number(row.delivery_fee ?? 0).toLocaleString()}</TableCell>
+                <TableCell align="right">{Number(row.tax_value ?? 0)}%</TableCell>
                 <TableCell align="right">{row.weight_gram}</TableCell>
                 <TableCell align="center">
                   <IconButton
@@ -281,7 +311,7 @@ const ProductsPage = () => {
             ))}
             {data?.data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} align="center">
+                <TableCell colSpan={11} align="center">
                   No products found.
                 </TableCell>
               </TableRow>
@@ -361,11 +391,28 @@ const ProductsPage = () => {
                 fullWidth
               />
               <TextField
+                label="Selling price"
+                type="number"
+                value={editSellingPrice}
+                onChange={(e) => setEditSellingPrice(e.target.value)}
+                slotProps={{ htmlInput: { min: 0, step: 'any' } }}
+                fullWidth
+              />
+              <TextField
                 label="Delivery fee"
                 type="number"
                 value={editDeliveryFee}
                 onChange={(e) => setEditDeliveryFee(e.target.value)}
                 slotProps={{ htmlInput: { min: 0, step: 'any' } }}
+                fullWidth
+              />
+              <TextField
+                label="Tax (%)"
+                type="number"
+                value={editTaxValue}
+                onChange={(e) => setEditTaxValue(e.target.value)}
+                slotProps={{ htmlInput: { min: 0, step: 0.01 } }}
+                helperText="Product VAT percentage, e.g. 6.5, 8.5. Applies to the underlying product, shared across adaptations."
                 fullWidth
               />
               {saveError ? <Alert severity="error">{saveError}</Alert> : null}
@@ -382,8 +429,12 @@ const ProductsPage = () => {
               !editProduct ||
               !Number.isFinite(parseFloat(editCostPrice)) ||
               parseFloat(editCostPrice) < 0 ||
+              !Number.isFinite(parseFloat(editSellingPrice)) ||
+              parseFloat(editSellingPrice) < 0 ||
               !Number.isFinite(parseFloat(editDeliveryFee)) ||
               parseFloat(editDeliveryFee) < 0 ||
+              !Number.isFinite(parseFloat(editTaxValue)) ||
+              parseFloat(editTaxValue) < 0 ||
               (editProduct.adaption_id == null &&
                 (!editStartDate.trim() ||
                   !editEndDate.trim() ||
