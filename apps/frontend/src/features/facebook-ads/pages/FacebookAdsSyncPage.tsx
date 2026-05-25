@@ -578,6 +578,7 @@ const FacebookAdsSyncPage = () => {
               <Table size="small">
                 <TableHead>
                   <TableRow>
+                    <TableCell>ID</TableCell>
                     <TableCell>Ad account</TableCell>
                     <TableCell>Product code</TableCell>
                     <TableCell align="right">Spend</TableCell>
@@ -590,14 +591,55 @@ const FacebookAdsSyncPage = () => {
                 </TableHead>
                 <TableBody>
                   {(() => {
-                    const normalizeButtonShown = new Set<string>();
-                    return dailyCostRows.map((row) => {
-                      const showNormalize =
-                        row.can_normalize &&
-                        !normalizeButtonShown.has(row.ad_account_id);
-                      if (showNormalize) {
-                        normalizeButtonShown.add(row.ad_account_id);
+                    // For each ad account, choose ONE row to host the
+                    // Normalize button:
+                    //  - If any row has unmatched ads, the first such row.
+                    //  - Otherwise, the first row of that account.
+                    const normalizeAnchorByAccountId = new Map<
+                      string,
+                      FacebookAdsDailyCostRow
+                    >();
+                    for (const row of dailyCostRows) {
+                      if (!row.can_normalize) continue;
+                      const existing = normalizeAnchorByAccountId.get(
+                        row.ad_account_id,
+                      );
+                      if (!existing) {
+                        normalizeAnchorByAccountId.set(
+                          row.ad_account_id,
+                          row,
+                        );
+                        continue;
                       }
+                      if (
+                        existing.unmatched_ads_count === 0 &&
+                        row.unmatched_ads_count > 0
+                      ) {
+                        normalizeAnchorByAccountId.set(
+                          row.ad_account_id,
+                          row,
+                        );
+                      }
+                    }
+
+                    const formatNormalizeAnchorLabel = (
+                      anchor: FacebookAdsDailyCostRow,
+                    ) => anchor.product_code ?? `#${anchor.id}`;
+
+                    return dailyCostRows.map((row) => {
+                      const anchor = normalizeAnchorByAccountId.get(
+                        row.ad_account_id,
+                      );
+                      const showNormalize =
+                        !!anchor && anchor.id === row.id;
+                      const showNormalizeHint =
+                        !!anchor &&
+                        anchor.id !== row.id &&
+                        row.can_normalize;
+                      const normalizeAnchorLabel =
+                        showNormalizeHint && anchor
+                          ? formatNormalizeAnchorLabel(anchor)
+                          : null;
 
                       return (
                     <TableRow
@@ -608,6 +650,11 @@ const FacebookAdsSyncPage = () => {
                           : undefined
                       }
                     >
+                      <TableCell>
+                        <Typography variant="caption" color="text.secondary">
+                          #{row.id}
+                        </Typography>
+                      </TableCell>
                       <TableCell>{formatRowAccountLabel(row)}</TableCell>
                       <TableCell>
                         {row.product_code ?? (
@@ -693,7 +740,20 @@ const FacebookAdsSyncPage = () => {
                               Normalize
                             </Button>
                           ) : null}
-                          {!row.can_resync && !showNormalize ? '—' : null}
+                          {normalizeAnchorLabel ? (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ fontStyle: 'italic' }}
+                            >
+                              ↑ Use Normalize on {normalizeAnchorLabel} row
+                            </Typography>
+                          ) : null}
+                          {!row.can_resync &&
+                          !showNormalize &&
+                          !normalizeAnchorLabel
+                            ? '—'
+                            : null}
                         </Box>
                       </TableCell>
                     </TableRow>
