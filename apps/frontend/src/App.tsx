@@ -15,6 +15,8 @@ import ChangePasswordPage from './features/users/pages/ChangePasswordPage';
 import ProductsPage from './features/products/pages/ProductsPage';
 import OrdersPage from './features/orders/pages/OrdersPage';
 import FacebookAdsSyncPage from './features/facebook-ads/pages/FacebookAdsSyncPage';
+import MarketingSummaryPage from './features/marketing-summary/pages/MarketingSummaryPage';
+import ProfitSegmentsPage from './features/profit-segments/pages/ProfitSegmentsPage';
 import NotFoundPage from './features/errors/pages/NotFoundPage';
 import AdminLayout from './shared/components/layout/AdminLayout';
 import { hasValidSession, PANEL_PREFIX } from './shared/auth/authStorage';
@@ -93,6 +95,26 @@ export function createAppRouteObjects(): RouteObject[] {
         <ProtectedRoute>
           <AdminLayout>
             <FacebookAdsSyncPage />
+          </AdminLayout>
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: `${panelBase}/marketing-summary`,
+      element: (
+        <ProtectedRoute>
+          <AdminLayout>
+            <MarketingSummaryPage />
+          </AdminLayout>
+        </ProtectedRoute>
+      ),
+    },
+    {
+      path: `${panelBase}/profit-segments`,
+      element: (
+        <ProtectedRoute>
+          <AdminLayout>
+            <ProfitSegmentsPage />
           </AdminLayout>
         </ProtectedRoute>
       ),

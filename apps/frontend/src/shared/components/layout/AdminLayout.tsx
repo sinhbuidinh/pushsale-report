@@ -11,6 +11,8 @@ import {
   Inventory as InventoryIcon, 
   Receipt as OrdersIcon,
   Campaign as CampaignIcon,
+  Insights as InsightsIcon,
+  Tune as TuneIcon,
   Logout as LogoutIcon 
 } from '@mui/icons-material';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
@@ -48,6 +50,8 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { text: 'Products', icon: <InventoryIcon />, path: `/${PANEL_PREFIX}/products`, roles: ['admin'] },
     { text: 'Orders', icon: <OrdersIcon />, path: `/${PANEL_PREFIX}/orders`, roles: ['admin'] },
     { text: 'Facebook Ads', icon: <CampaignIcon />, path: `/${PANEL_PREFIX}/facebook-ads`, roles: ['admin'] },
+    { text: 'Marketing Summary', icon: <InsightsIcon />, path: `/${PANEL_PREFIX}/marketing-summary`, roles: ['admin'] },
+    { text: 'Profit Segments', icon: <TuneIcon />, path: `/${PANEL_PREFIX}/profit-segments`, roles: ['admin'] },
   ];
 
   return (
