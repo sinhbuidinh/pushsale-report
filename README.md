@@ -211,3 +211,9 @@ sync-project/
 | `apps/frontend` | Public landing and authenticated admin (MUI, React Query, react-router). |
 | `packages/shared` | Cross-app enums/types (e.g. sync-related) consumed as `file:` dependency. |
 | Docker / nginx files | Container builds and reverse proxy for the static frontend in production. |
+
+# Recommend fix errors
+1/ Command hang and cant complete
+# This ensures no zombies from a previous run will starve the new one
+pkill -9 -f eslint
+pkill -9 -f jest

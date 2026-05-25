@@ -26,10 +26,7 @@ export class MarketingSummaryController {
     @Query('end_date') endDate: string = '',
   ) {
     try {
-      const marketing_user_id = parseInt(
-        String(marketingUserIdStr).trim(),
-        10,
-      );
+      const marketing_user_id = parseInt(String(marketingUserIdStr).trim(), 10);
       if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
         throw new BadRequestException(
           'marketing_user_id query parameter is required',

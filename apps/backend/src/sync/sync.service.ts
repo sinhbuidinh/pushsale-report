@@ -282,9 +282,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
             const resData = attempt.response.data;
             if (resData && resData.successful === false) {
-              throw new Error(
-                `${resData.errorCode}: ${resData.errorMessage}`,
-              );
+              throw new Error(`${resData.errorCode}: ${resData.errorMessage}`);
             }
             results = resData?.result;
             break;

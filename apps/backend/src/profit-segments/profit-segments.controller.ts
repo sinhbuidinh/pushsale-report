@@ -65,7 +65,9 @@ export class ProfitSegmentsController {
     }
   }
 
-  private coerceUpdateDto(body: Record<string, unknown>): UpdateProfitSegmentDto {
+  private coerceUpdateDto(
+    body: Record<string, unknown>,
+  ): UpdateProfitSegmentDto {
     const dto: UpdateProfitSegmentDto = {};
     if (typeof body.name === 'string') {
       dto.name = body.name;

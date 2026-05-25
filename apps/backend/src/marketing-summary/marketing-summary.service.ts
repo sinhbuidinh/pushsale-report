@@ -195,11 +195,13 @@ export class MarketingSummaryService {
       throw new BadRequestException('end_date must be YYYY-MM-DD');
     }
     if (q.start_date > q.end_date) {
-      throw new BadRequestException(
-        'start_date must be on or before end_date',
-      );
+      throw new BadRequestException('start_date must be on or before end_date');
     }
-    return { marketing_user_id, start_date: q.start_date, end_date: q.end_date };
+    return {
+      marketing_user_id,
+      start_date: q.start_date,
+      end_date: q.end_date,
+    };
   }
 
   /**
