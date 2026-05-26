@@ -45,12 +45,12 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   };
 
   const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: `/${PANEL_PREFIX}/dashboard`, roles: ['admin', 'marketing', 'sale'] },
+    { text: 'Dashboard', icon: <DashboardIcon />, path: `/${PANEL_PREFIX}/dashboard`, roles: ['admin', 'sale'] },
     { text: 'Users', icon: <PeopleIcon />, path: `/${PANEL_PREFIX}/users`, roles: ['admin', 'marketing', 'sale'] },
     { text: 'Products', icon: <InventoryIcon />, path: `/${PANEL_PREFIX}/products`, roles: ['admin'] },
     { text: 'Orders', icon: <OrdersIcon />, path: `/${PANEL_PREFIX}/orders`, roles: ['admin'] },
     { text: 'Facebook Ads', icon: <CampaignIcon />, path: `/${PANEL_PREFIX}/facebook-ads`, roles: ['admin'] },
-    { text: 'Marketing Summary', icon: <InsightsIcon />, path: `/${PANEL_PREFIX}/marketing-summary`, roles: ['admin'] },
+    { text: 'Marketing Summary', icon: <InsightsIcon />, path: `/${PANEL_PREFIX}/marketing-summary`, roles: ['admin', 'marketing'] },
     { text: 'Profit Segments', icon: <TuneIcon />, path: `/${PANEL_PREFIX}/profit-segments`, roles: ['admin'] },
   ];
 

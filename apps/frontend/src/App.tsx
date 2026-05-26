@@ -19,7 +19,12 @@ import MarketingSummaryPage from './features/marketing-summary/pages/MarketingSu
 import ProfitSegmentsPage from './features/profit-segments/pages/ProfitSegmentsPage';
 import NotFoundPage from './features/errors/pages/NotFoundPage';
 import AdminLayout from './shared/components/layout/AdminLayout';
-import { hasValidSession, PANEL_PREFIX } from './shared/auth/authStorage';
+import {
+  getDefaultLandingPath,
+  getStoredUser,
+  hasValidSession,
+  PANEL_PREFIX,
+} from './shared/auth/authStorage';
 
 const appTheme = createTheme();
 
@@ -29,7 +34,28 @@ const ProtectedRoute = ({ children }: { children: React.ReactElement }) => {
 };
 
 const PublicRoute = ({ children }: { children: React.ReactElement }) => {
-  if (hasValidSession()) return <Navigate to={`/${PANEL_PREFIX}/dashboard`} replace />;
+  if (hasValidSession()) {
+    return <Navigate to={getDefaultLandingPath(getStoredUser()?.type)} replace />;
+  }
+  return children;
+};
+
+/**
+ * Restricts a route to a set of user roles. Anyone else is sent to their
+ * default landing page (e.g. a marketing user hitting `/dashboard` lands on
+ * `/marketing-summary`).
+ */
+const RoleRoute = ({
+  allow,
+  children,
+}: {
+  allow: ReadonlyArray<string>;
+  children: React.ReactElement;
+}) => {
+  const userType = getStoredUser()?.type;
+  if (userType && !allow.includes(userType)) {
+    return <Navigate to={getDefaultLandingPath(userType)} replace />;
+  }
   return children;
 };
 
@@ -43,9 +69,11 @@ export function createAppRouteObjects(): RouteObject[] {
       path: `${panelBase}/dashboard`,
       element: (
         <ProtectedRoute>
-          <AdminLayout>
-            <Dashboard />
-          </AdminLayout>
+          <RoleRoute allow={['admin', 'sale']}>
+            <AdminLayout>
+              <Dashboard />
+            </AdminLayout>
+          </RoleRoute>
         </ProtectedRoute>
       ),
     },
@@ -73,9 +101,11 @@ export function createAppRouteObjects(): RouteObject[] {
       path: `${panelBase}/products`,
       element: (
         <ProtectedRoute>
-          <AdminLayout>
-            <ProductsPage />
-          </AdminLayout>
+          <RoleRoute allow={['admin']}>
+            <AdminLayout>
+              <ProductsPage />
+            </AdminLayout>
+          </RoleRoute>
         </ProtectedRoute>
       ),
     },
@@ -83,9 +113,11 @@ export function createAppRouteObjects(): RouteObject[] {
       path: `${panelBase}/orders`,
       element: (
         <ProtectedRoute>
-          <AdminLayout>
-            <OrdersPage />
-          </AdminLayout>
+          <RoleRoute allow={['admin']}>
+            <AdminLayout>
+              <OrdersPage />
+            </AdminLayout>
+          </RoleRoute>
         </ProtectedRoute>
       ),
     },
@@ -93,9 +125,11 @@ export function createAppRouteObjects(): RouteObject[] {
       path: `${panelBase}/facebook-ads`,
       element: (
         <ProtectedRoute>
-          <AdminLayout>
-            <FacebookAdsSyncPage />
-          </AdminLayout>
+          <RoleRoute allow={['admin']}>
+            <AdminLayout>
+              <FacebookAdsSyncPage />
+            </AdminLayout>
+          </RoleRoute>
         </ProtectedRoute>
       ),
     },
@@ -103,9 +137,11 @@ export function createAppRouteObjects(): RouteObject[] {
       path: `${panelBase}/marketing-summary`,
       element: (
         <ProtectedRoute>
-          <AdminLayout>
-            <MarketingSummaryPage />
-          </AdminLayout>
+          <RoleRoute allow={['admin', 'marketing']}>
+            <AdminLayout>
+              <MarketingSummaryPage />
+            </AdminLayout>
+          </RoleRoute>
         </ProtectedRoute>
       ),
     },
@@ -113,9 +149,11 @@ export function createAppRouteObjects(): RouteObject[] {
       path: `${panelBase}/profit-segments`,
       element: (
         <ProtectedRoute>
-          <AdminLayout>
-            <ProfitSegmentsPage />
-          </AdminLayout>
+          <RoleRoute allow={['admin']}>
+            <AdminLayout>
+              <ProfitSegmentsPage />
+            </AdminLayout>
+          </RoleRoute>
         </ProtectedRoute>
       ),
     },
