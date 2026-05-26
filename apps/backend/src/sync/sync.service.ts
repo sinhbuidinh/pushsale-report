@@ -119,6 +119,12 @@ function optionalDateTimeString(
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SyncService.name);
   private dailyCronJob: CronJob | null = null;
+  /**
+   * In-process lock: a single PushSale order sync can saturate PushSale's
+   * per-token throttle, and overlapping runs against the same date corrupt
+   * sync_logs rows. We never want two background syncs in flight at once.
+   */
+  private isSyncRunning = false;
 
   constructor(
     @InjectRepository(Product)
@@ -150,6 +156,13 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       timeZone,
     );
     this.dailyCronJob.start();
+    this.logger.log(
+      `Daily PushSale sync cron registered: "${cronExpression}" (${timeZone}).`,
+    );
+
+    // Self-heal a missed daily run (process was down at the cron's fire time):
+    // on every boot, if yesterday's sync did not finish successfully, kick it off now.
+    void this.catchUpMissedDailySync();
   }
 
   onModuleDestroy(): void {
@@ -160,7 +173,36 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   handleDailySync(): void {
     this.logger.log('Starting automated daily PushSale sync...');
     this.syncOrdersFromPushSale(undefined, 1, SyncTriggerSource.Cron);
-    this.logger.log('Automated daily PushSale sync completed.');
+    this.logger.log('Automated daily PushSale sync dispatched.');
+  }
+
+  /**
+   * Runs once at boot. If the previous calendar day in APP_TIMEZONE has no
+   * successful sync_log row, triggers a sync for that day. Older missed days
+   * still need to be re-synced manually via POST /sync/orders.
+   */
+  private async catchUpMissedDailySync(): Promise<void> {
+    try {
+      const yesterday = yesterdayCalendarInZone(getAppTimeZone());
+      const lastSuccess = await this.syncLogRepo.findOne({
+        where: { sync_date: yesterday, status: SyncStatus.Success },
+        order: { id: 'DESC' },
+      });
+      if (lastSuccess) {
+        this.logger.log(
+          `Startup catch-up: sync for ${yesterday} already succeeded (sync_log #${lastSuccess.id}); nothing to do.`,
+        );
+        return;
+      }
+      this.logger.warn(
+        `Startup catch-up: no successful sync for ${yesterday}; triggering sync now.`,
+      );
+      this.syncOrdersFromPushSale(yesterday, 1, SyncTriggerSource.Cron);
+    } catch (err) {
+      this.logger.error(
+        `Startup catch-up failed: ${httpErrorMessage(err)}. Daily cron will still run as scheduled.`,
+      );
+    }
   }
 
   async getSyncLogs(page: number = 1, limit: number = 10) {
@@ -186,12 +228,31 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   ) {
     const dateStr = targetDate || yesterdayCalendarInZone(getAppTimeZone());
 
-    // Fire and forget
-    this.runBackgroundSync(dateStr, pageBegin, triggerSource).catch((err) =>
-      this.logger.error(
-        `Background sync failed for ${dateStr}: ${httpErrorMessage(err)}`,
-      ),
-    );
+    if (this.isSyncRunning) {
+      this.logger.warn(
+        `Sync request for ${dateStr} (trigger=${triggerSource}) ignored: another sync is already running.`,
+      );
+      return {
+        status: 'skipped',
+        date: dateStr,
+        pageBegin,
+        trigger_source: triggerSource,
+        message:
+          'Another PushSale sync is already in progress; this request was ignored.',
+      };
+    }
+    this.isSyncRunning = true;
+
+    // Fire and forget; lock is released in finally so a crash never leaves it stuck.
+    this.runBackgroundSync(dateStr, pageBegin, triggerSource)
+      .catch((err) =>
+        this.logger.error(
+          `Background sync failed for ${dateStr}: ${httpErrorMessage(err)}`,
+        ),
+      )
+      .finally(() => {
+        this.isSyncRunning = false;
+      });
 
     return {
       status: 'initiated',
