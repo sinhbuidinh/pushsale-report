@@ -1,5 +1,11 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { CronJob } from 'cron';
 import type { AxiosResponse } from 'axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
@@ -23,6 +29,16 @@ import {
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION?.trim() || 'v23.0';
+
+/** Pause between Meta insights fetches per ad account (cron + manual sync). */
+function facebookAdsAdAccountIntervalMs(): number {
+  const raw = process.env.FACEBOOK_ADS_AD_ACCOUNT_INTERVAL_MS?.trim();
+  if (!raw) {
+    return 5000;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 5000;
+}
 
 export interface FacebookAdInsight {
   // account
@@ -95,8 +111,10 @@ type SpendBucket = {
 };
 
 @Injectable()
-export class FacebookAdsSyncService {
+export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(FacebookAdsSyncService.name);
+  private dailyFacebookAdsCronJob: CronJob | null = null;
+  private isDailyCronRunning = false;
 
   constructor(
     private readonly httpService: HttpService,
@@ -111,6 +129,139 @@ export class FacebookAdsSyncService {
     @InjectRepository(FacebookAdsInsightsSnapshot)
     private readonly insightsSnapshotRepo: Repository<FacebookAdsInsightsSnapshot>,
   ) {}
+
+  onModuleInit(): void {
+    void this.dailyFacebookAdsCronJob?.stop();
+    const timeZone = getAppTimeZone();
+    const cronExpression =
+      process.env.FACEBOOK_ADS_SYNC_CRON_EXPRESSION?.trim() || '15 0 * * *';
+    this.dailyFacebookAdsCronJob = new CronJob(
+      cronExpression,
+      () => void this.handleDailyFacebookAdsSync(),
+      null,
+      false,
+      timeZone,
+    );
+    this.dailyFacebookAdsCronJob.start();
+    this.logger.log(
+      `Daily Facebook Ads sync cron registered: "${cronExpression}" (${timeZone}).`,
+    );
+  }
+
+  onModuleDestroy(): void {
+    void this.dailyFacebookAdsCronJob?.stop();
+    this.dailyFacebookAdsCronJob = null;
+  }
+
+  /** Cron entry: sync yesterday's ads costs for every marketing user with ad accounts. */
+  handleDailyFacebookAdsSync(): void {
+    if (this.isDailyCronRunning) {
+      this.logger.warn(
+        'Daily Facebook Ads sync skipped: previous run still in progress.',
+      );
+      return;
+    }
+    this.isDailyCronRunning = true;
+    const syncDate = yesterdayCalendarInZone(getAppTimeZone());
+    this.logger.log(
+      `Starting automated daily Facebook Ads sync for ${syncDate}...`,
+    );
+    void this.syncAllMarketingUsers(syncDate)
+      .then((summary) => {
+        this.logger.log(
+          `Automated daily Facebook Ads sync finished: ${summary.users_synced} user(s) synced, ${summary.users_skipped_already_synced} already complete, ${summary.users_failed} failed.`,
+        );
+      })
+      .catch((err) => {
+        this.logger.error(
+          `Automated daily Facebook Ads sync failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      })
+      .finally(() => {
+        this.isDailyCronRunning = false;
+      });
+  }
+
+  /**
+   * Same flow as POST /sync/facebook-ads/marketing-user for each marketing user
+   * that has at least one linked ad account.
+   */
+  async syncAllMarketingUsers(syncDate?: string): Promise<{
+    sync_date: string;
+    users_total: number;
+    users_synced: number;
+    users_skipped_already_synced: number;
+    users_failed: number;
+    results: Array<{
+      marketing_user_id: number;
+      display_name: string;
+      ok: boolean;
+      already_synced?: boolean;
+      error?: string;
+    }>;
+  }> {
+    const date = this.resolveSyncDate(syncDate);
+    const marketingUsers = await this.listMarketingUsers();
+    const withAccounts = marketingUsers.filter(
+      (user) => user.ads_account_count > 0,
+    );
+
+    const results: Array<{
+      marketing_user_id: number;
+      display_name: string;
+      ok: boolean;
+      already_synced?: boolean;
+      error?: string;
+    }> = [];
+    let usersSynced = 0;
+    let usersSkippedAlreadySynced = 0;
+    let usersFailed = 0;
+
+    for (const user of withAccounts) {
+      try {
+        const outcome = await this.syncForMarketingUser(user.user_id, date);
+        if (outcome.already_synced) {
+          usersSkippedAlreadySynced += 1;
+        } else {
+          usersSynced += 1;
+        }
+        results.push({
+          marketing_user_id: user.user_id,
+          display_name: user.display_name,
+          ok: true,
+          already_synced: outcome.already_synced,
+        });
+      } catch (err) {
+        usersFailed += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Facebook Ads sync failed for marketing user ${user.user_id} (${user.display_name}) on ${date}: ${message}`,
+        );
+        results.push({
+          marketing_user_id: user.user_id,
+          display_name: user.display_name,
+          ok: false,
+          error: message,
+        });
+      }
+    }
+
+    return {
+      sync_date: date,
+      users_total: withAccounts.length,
+      users_synced: usersSynced,
+      users_skipped_already_synced: usersSkippedAlreadySynced,
+      users_failed: usersFailed,
+      results,
+    };
+  }
+
+  private sleepMs(ms: number): Promise<void> {
+    if (ms <= 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   /** All users with role marketing (for sync UI dropdown). */
   async listMarketingUsers() {
@@ -211,14 +362,19 @@ export class FacebookAdsSyncService {
     const results: Awaited<
       ReturnType<FacebookAdsSyncService['syncDailyProductCosts']>
     >[] = [];
+    const intervalMs = facebookAdsAdAccountIntervalMs();
 
-    for (const account of pending) {
+    for (let i = 0; i < pending.length; i++) {
+      const account = pending[i];
       const result = await this.syncDailyProductCosts({
         date: status.sync_date,
         adAccountId: account.ad_account_id,
         filterIsActiveCampaign: false,
       });
       results.push(result);
+      if (i < pending.length - 1 && intervalMs > 0) {
+        await this.sleepMs(intervalMs);
+      }
     }
 
     const totalSpend = results.reduce(

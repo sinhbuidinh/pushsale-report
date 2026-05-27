@@ -49,7 +49,11 @@ export class AuthService {
   async seedAdmin() {
     const admin = await this.userRepo.findOne({ where: { username: 'admin' } });
     if (!admin) {
-      const hashedPassword = await bcrypt.hash('admin@2026', 10);
+      const seedPassword = process.env.DEFAULT_ADMIN_PASSWORD?.trim();
+      if (!seedPassword) {
+        throw new Error('DEFAULT_ADMIN_PASSWORD is not set');
+      }
+      const hashedPassword = await bcrypt.hash(seedPassword, 10);
       await this.userRepo.save({
         username: 'admin',
         password: hashedPassword,
