@@ -53,9 +53,15 @@ export class ProductsController {
     }
   }
 
+  @Get('import/status')
+  getImportStatus() {
+    const data = this.productsService.getProductImportStatus();
+    return { status: true, data };
+  }
+
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
-  async importProducts(
+  importProducts(
     @UploadedFile() file?: { buffer: Buffer; originalname?: string },
   ) {
     if (!file?.buffer?.length) {
@@ -65,14 +71,10 @@ export class ProductsController {
     if (!name.endsWith('.xls') && !name.endsWith('.xlsx')) {
       throw new BadRequestException('Only .xls or .xlsx files are supported');
     }
-    try {
-      const data = await this.productsService.importProductsFromXls(
-        file.buffer,
-      );
-      return { status: true, data };
-    } catch (error) {
-      return { status: false, error: (error as Error).message };
-    }
+    const { message } = this.productsService.startProductImportFromXls(
+      file.buffer,
+    );
+    return { status: true, message };
   }
 
   @Post(':productId/adaptions')
