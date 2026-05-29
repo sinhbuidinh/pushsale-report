@@ -125,6 +125,28 @@ describe('parseProductRowsFromXls', () => {
     expect(parsed[0].delivery_fee).toBe(15000);
   });
 
+  it('reads tax_value from "Import Tax" column', () => {
+    const rows = [
+      [
+        'Mã sản phẩm',
+        'Tên sản phẩm gốc',
+        'Giá nhập',
+        'Đơn giá',
+        'Khối lượng (gram)',
+        'Import Tax',
+      ],
+      ['SP1', 'Giày Nam', '100.000', '200.000', '300', '8,5'],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
+    const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
+
+    const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
+    expect(errors).toEqual([]);
+    expect(parsed[0].tax_value).toBe(8.5);
+  });
+
   it('reads delivery_fee from "Delivery Fee" column', () => {
     const rows = [
       [

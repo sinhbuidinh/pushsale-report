@@ -9,6 +9,8 @@ export interface ProductImportRow {
   selling_price: number;
   weight_gram: number;
   delivery_fee: number;
+  /** Set when the sheet has an "Import Tax" column; omitted otherwise. */
+  tax_value?: number;
 }
 
 export interface ProductImportParseResult {
@@ -24,6 +26,7 @@ const HEADER_SELLING_PRICE = 'Đơn giá';
 const HEADER_WEIGHT_GRAM = 'Khối lượng (gram)';
 const HEADER_DELIVERY_FEE_VI = 'Phí vận chuyển';
 const HEADER_DELIVERY_FEE_EN = 'Delivery Fee';
+const HEADER_IMPORT_TAX = 'Import Tax';
 
 const DELIVERY_FEE_HEADERS = [
   HEADER_DELIVERY_FEE_VI,
@@ -253,8 +256,9 @@ export function parseProductRowsFromXls(
     const sellCol = colIndex[HEADER_SELLING_PRICE];
     const weightCol = colIndex[HEADER_WEIGHT_GRAM];
     const deliveryFeeCol = resolveDeliveryFeeColumnIndex(colIndex);
+    const importTaxCol = colIndex[HEADER_IMPORT_TAX];
 
-    rows.push({
+    const parsedRow: ProductImportRow = {
       rowNumber,
       item_code: itemCode,
       item_name: itemName || itemCode,
@@ -269,7 +273,13 @@ export function parseProductRowsFromXls(
         deliveryFeeCol != null
           ? parseVietnameseNumber(getCellDisplayValue(sheet, r, deliveryFeeCol))
           : 0,
-    });
+    };
+    if (importTaxCol != null) {
+      parsedRow.tax_value = parseVietnameseNumber(
+        getCellDisplayValue(sheet, r, importTaxCol),
+      );
+    }
+    rows.push(parsedRow);
   }
 
   return { rows, skipped, errors };

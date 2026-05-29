@@ -459,12 +459,16 @@ export class ProductsService {
     });
 
     if (product) {
-      await this.productRepo.update(product.id, {
+      const productUpdate: Partial<Product> = {
         item_name: row.item_name,
         cost_price: row.cost_price,
         delivery_fee: row.delivery_fee,
         weight_gram: row.weight_gram,
-      });
+      };
+      if (row.tax_value !== undefined) {
+        productUpdate.tax_value = row.tax_value;
+      }
+      await this.productRepo.update(product.id, productUpdate);
       ctx.result.productsUpdated++;
     } else {
       product = await this.productRepo.save({
@@ -473,6 +477,7 @@ export class ProductsService {
         cost_price: row.cost_price,
         selling_price: row.selling_price,
         delivery_fee: row.delivery_fee,
+        tax_value: row.tax_value ?? 0,
         weight_gram: row.weight_gram,
       });
       ctx.result.productsCreated++;
