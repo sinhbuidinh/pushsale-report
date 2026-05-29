@@ -91,6 +91,7 @@ describe('parseProductRowsFromXls', () => {
       cost_price: 750000,
       selling_price: 1500000,
       weight_gram: 300,
+      delivery_fee: 0,
     });
     expect(rows[1]).toMatchObject({
       item_code: 'SP033',
@@ -98,6 +99,51 @@ describe('parseProductRowsFromXls', () => {
       cost_price: 193000,
       selling_price: 429000,
       weight_gram: 1000,
+      delivery_fee: 0,
     });
+  });
+
+  it('reads delivery_fee from "Phí vận chuyển" column', () => {
+    const rows = [
+      [
+        'Mã sản phẩm',
+        'Tên sản phẩm gốc',
+        'Giá nhập',
+        'Đơn giá',
+        'Khối lượng (gram)',
+        'Phí vận chuyển',
+      ],
+      ['SP1', 'Giày Nam', '100.000', '200.000', '300', '15.000'],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
+    const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
+
+    const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
+    expect(errors).toEqual([]);
+    expect(parsed[0].delivery_fee).toBe(15000);
+  });
+
+  it('reads delivery_fee from "Delivery Fee" column', () => {
+    const rows = [
+      [
+        'Mã sản phẩm',
+        'Tên sản phẩm gốc',
+        'Giá nhập',
+        'Đơn giá',
+        'Khối lượng (gram)',
+        'Delivery Fee',
+      ],
+      ['SP1', 'Giày Nam', '100.000', '200.000', '300', '25.000'],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
+    const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
+
+    const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
+    expect(errors).toEqual([]);
+    expect(parsed[0].delivery_fee).toBe(25000);
   });
 });

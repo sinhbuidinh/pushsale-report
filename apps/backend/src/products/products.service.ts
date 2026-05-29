@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -51,6 +52,20 @@ export interface CreateProductAdaptionDto {
   tax_value?: number;
 }
 
+export type ProductImportJobState =
+  | 'idle'
+  | 'is-processing'
+  | 'completed'
+  | 'failed';
+
+export interface ProductImportJobStatus {
+  state: ProductImportJobState;
+  result?: ProductImportResult;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
 function calendarDateStr(d: Date): string {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -66,6 +81,20 @@ function calendarStrToUtcNoonDate(s: string): Date {
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Log import progress every N rows (large catalogs). */
+const PRODUCT_IMPORT_PROGRESS_LOG_INTERVAL = 100;
+
+function formatProductImportResult(result: ProductImportResult): string {
+  return [
+    `productsCreated=${result.productsCreated}`,
+    `productsUpdated=${result.productsUpdated}`,
+    `adaptionsCreated=${result.adaptionsCreated}`,
+    `adaptionsUpdated=${result.adaptionsUpdated}`,
+    `skipped=${result.skipped}`,
+    `errors=${result.errors.length}`,
+  ].join(', ');
+}
+
 function parseYmdOrThrow(label: string, value: string): void {
   if (!YMD_RE.test(value)) {
     throw new BadRequestException(`${label} must be YYYY-MM-DD`);
@@ -78,12 +107,82 @@ function parseYmdOrThrow(label: string, value: string): void {
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+  private importJob: ProductImportJobStatus = { state: 'idle' };
+
   constructor(
     @InjectRepository(Product)
     private readonly productRepo: Repository<Product>,
     @InjectRepository(ProductAdaption)
     private readonly adaptionRepo: Repository<ProductAdaption>,
   ) {}
+
+  getProductImportStatus(): ProductImportJobStatus {
+    return { ...this.importJob };
+  }
+
+  /**
+   * Starts XLS import in the background so the HTTP request can return immediately.
+   * Only one import runs at a time per process.
+   */
+  startProductImportFromXls(buffer: Buffer): { message: 'is-processing' } {
+    if (this.importJob.state === 'is-processing') {
+      this.logger.warn(
+        `Product import job ignored: already is-processing (started_at=${this.importJob.started_at ?? 'unknown'})`,
+      );
+      return { message: 'is-processing' };
+    }
+
+    const startedAt = new Date().toISOString();
+    this.importJob = {
+      state: 'is-processing',
+      started_at: startedAt,
+    };
+    this.logger.log(
+      `Product import job started: state=is-processing started_at=${startedAt} fileBytes=${buffer.length}`,
+    );
+
+    void this.runProductImportInBackground(buffer);
+
+    return { message: 'is-processing' };
+  }
+
+  private async runProductImportInBackground(buffer: Buffer): Promise<void> {
+    const startedAt = this.importJob.started_at;
+    const runStartedMs = Date.now();
+    try {
+      const result = await this.importProductsFromXls(buffer);
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.now() - runStartedMs;
+      this.importJob = {
+        state: 'completed',
+        result,
+        started_at: startedAt,
+        finished_at: finishedAt,
+      };
+      this.logger.log(
+        `Product import job completed: state=completed durationMs=${durationMs} started_at=${startedAt} finished_at=${finishedAt} ${formatProductImportResult(result)}`,
+      );
+      if (result.errors.length > 0) {
+        this.logger.warn(
+          `Product import row errors (${result.errors.length}): ${result.errors.slice(0, 5).join(' | ')}${result.errors.length > 5 ? ' | …' : ''}`,
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.now() - runStartedMs;
+      this.logger.error(
+        `Product import job failed: state=failed durationMs=${durationMs} started_at=${startedAt} finished_at=${finishedAt} error=${msg}`,
+      );
+      this.importJob = {
+        state: 'failed',
+        error: msg,
+        started_at: startedAt,
+        finished_at: finishedAt,
+      };
+    }
+  }
 
   /** Adaption whose date range includes `todayStr` (YYYY-MM-DD): start_date <= today <= end_date. */
   async findAdaptionActiveOnCalendarDate(
@@ -280,6 +379,7 @@ export class ProductsService {
    * Upserts `product` by `item_code` and the current month's active `product_adaption`.
    */
   async importProductsFromXls(buffer: Buffer): Promise<ProductImportResult> {
+    const parseStartedMs = Date.now();
     const parsed = parseProductRowsFromXls(buffer);
     const result: ProductImportResult = {
       productsCreated: 0,
@@ -290,7 +390,17 @@ export class ProductsService {
       errors: [...parsed.errors],
     };
 
+    this.logger.log(
+      `Product import parse finished in ${Date.now() - parseStartedMs}ms: rows=${parsed.rows.length} skipped=${parsed.skipped} parseErrors=${parsed.errors.length}`,
+    );
+    if (parsed.errors.length > 0) {
+      this.logger.warn(
+        `Product import parse warnings: ${parsed.errors.slice(0, 5).join(' | ')}${parsed.errors.length > 5 ? ' | …' : ''}`,
+      );
+    }
+
     if (parsed.rows.length === 0) {
+      this.logger.log('Product import: no product rows to upsert');
       return result;
     }
 
@@ -301,8 +411,14 @@ export class ProductsService {
     );
     const monthStartDate = calendarStrToUtcNoonDate(startStr);
     const monthEndDate = calendarStrToUtcNoonDate(endStr);
+    const totalRows = parsed.rows.length;
 
-    for (const row of parsed.rows) {
+    this.logger.log(
+      `Product import upsert started: rows=${totalRows} adaptionMonth=${startStr}..${endStr} today=${todayStr}`,
+    );
+
+    for (let i = 0; i < parsed.rows.length; i++) {
+      const row = parsed.rows[i];
       try {
         await this.upsertProductRow(row, {
           monthStartDate,
@@ -313,6 +429,16 @@ export class ProductsService {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.errors.push(`Row ${row.rowNumber}: ${msg}`);
+      }
+
+      const processed = i + 1;
+      if (
+        processed % PRODUCT_IMPORT_PROGRESS_LOG_INTERVAL === 0 ||
+        processed === totalRows
+      ) {
+        this.logger.log(
+          `Product import progress: ${processed}/${totalRows} rows ${formatProductImportResult(result)}`,
+        );
       }
     }
 
@@ -336,6 +462,7 @@ export class ProductsService {
       await this.productRepo.update(product.id, {
         item_name: row.item_name,
         cost_price: row.cost_price,
+        delivery_fee: row.delivery_fee,
         weight_gram: row.weight_gram,
       });
       ctx.result.productsUpdated++;
@@ -345,7 +472,7 @@ export class ProductsService {
         item_name: row.item_name,
         cost_price: row.cost_price,
         selling_price: row.selling_price,
-        delivery_fee: 0,
+        delivery_fee: row.delivery_fee,
         weight_gram: row.weight_gram,
       });
       ctx.result.productsCreated++;
@@ -360,6 +487,7 @@ export class ProductsService {
       await this.adaptionRepo.update(adaption.id, {
         cost_price: row.cost_price,
         selling_price: row.selling_price,
+        delivery_fee: row.delivery_fee,
       });
       ctx.result.adaptionsUpdated++;
       return;
@@ -371,7 +499,7 @@ export class ProductsService {
       end_date: ctx.monthEndDate,
       cost_price: row.cost_price,
       selling_price: row.selling_price,
-      delivery_fee: 0,
+      delivery_fee: row.delivery_fee,
     });
     ctx.result.adaptionsCreated++;
   }
