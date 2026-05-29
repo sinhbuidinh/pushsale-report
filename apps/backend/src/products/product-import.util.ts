@@ -8,6 +8,7 @@ export interface ProductImportRow {
   cost_price: number;
   selling_price: number;
   weight_gram: number;
+  delivery_fee: number;
 }
 
 export interface ProductImportParseResult {
@@ -21,6 +22,13 @@ const HEADER_ITEM_NAME = 'Tên sản phẩm gốc';
 const HEADER_COST_PRICE = 'Giá nhập';
 const HEADER_SELLING_PRICE = 'Đơn giá';
 const HEADER_WEIGHT_GRAM = 'Khối lượng (gram)';
+const HEADER_DELIVERY_FEE_VI = 'Phí vận chuyển';
+const HEADER_DELIVERY_FEE_EN = 'Delivery Fee';
+
+const DELIVERY_FEE_HEADERS = [
+  HEADER_DELIVERY_FEE_VI,
+  HEADER_DELIVERY_FEE_EN,
+] as const;
 
 const REQUIRED_HEADERS = [
   HEADER_ITEM_CODE,
@@ -151,6 +159,19 @@ function cellAt(
   return row[idx];
 }
 
+/** First matching delivery-fee column (Vietnamese preferred over English). */
+function resolveDeliveryFeeColumnIndex(
+  colIndex: Record<string, number>,
+): number | undefined {
+  for (const header of DELIVERY_FEE_HEADERS) {
+    const idx = colIndex[header];
+    if (idx != null) {
+      return idx;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Reads the first worksheet of a legacy .xls / .xlsx buffer and returns product rows.
  * Skips blank lines; rows without `Tên sản phẩm gốc` are counted in `skipped`.
@@ -231,6 +252,7 @@ export function parseProductRowsFromXls(
     const costCol = colIndex[HEADER_COST_PRICE];
     const sellCol = colIndex[HEADER_SELLING_PRICE];
     const weightCol = colIndex[HEADER_WEIGHT_GRAM];
+    const deliveryFeeCol = resolveDeliveryFeeColumnIndex(colIndex);
 
     rows.push({
       rowNumber,
@@ -243,6 +265,10 @@ export function parseProductRowsFromXls(
       weight_gram: Math.round(
         parseVietnameseNumber(getCellDisplayValue(sheet, r, weightCol)),
       ),
+      delivery_fee:
+        deliveryFeeCol != null
+          ? parseVietnameseNumber(getCellDisplayValue(sheet, r, deliveryFeeCol))
+          : 0,
     });
   }
 
