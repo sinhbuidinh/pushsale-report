@@ -118,7 +118,10 @@ describe('parseProductRowsFromXls', () => {
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
-    const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
+    const buffer = XLSX.write(book, {
+      type: 'buffer',
+      bookType: 'xls',
+    }) as Buffer;
 
     const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
     expect(errors).toEqual([]);
@@ -140,7 +143,10 @@ describe('parseProductRowsFromXls', () => {
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
-    const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
+    const buffer = XLSX.write(book, {
+      type: 'buffer',
+      bookType: 'xls',
+    }) as Buffer;
 
     const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
     expect(errors).toEqual([]);
@@ -162,7 +168,10 @@ describe('parseProductRowsFromXls', () => {
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, 'Sheet1');
-    const buffer = XLSX.write(book, { type: 'buffer', bookType: 'xls' }) as Buffer;
+    const buffer = XLSX.write(book, {
+      type: 'buffer',
+      bookType: 'xls',
+    }) as Buffer;
 
     const { rows: parsed, errors } = parseProductRowsFromXls(buffer);
     expect(errors).toEqual([]);
