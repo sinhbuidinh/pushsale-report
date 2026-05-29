@@ -1,3 +1,59 @@
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function addOneCivilDay(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const jd = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  jd.setUTCDate(jd.getUTCDate() + 1);
+  const mo = jd.getUTCMonth() + 1;
+  const da = jd.getUTCDate();
+  return `${jd.getUTCFullYear()}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+}
+
+/**
+ * UTC milliseconds for the first instant of calendar day `ymd` (YYYY-MM-DD)
+ * in `timeZone` (wall clock).
+ */
+export function startOfCalendarDayInZone(
+  ymd: string,
+  timeZone: string = getAppTimeZone(),
+): number {
+  if (!YMD_RE.test(ymd)) {
+    throw new Error('Invalid date format. Expected YYYY-MM-DD.');
+  }
+  const [ys, ms, ds] = ymd.split('-');
+  const label = `${ys}-${ms}-${ds}`;
+  const y = Number(ys);
+  const mo = Number(ms);
+  const d = Number(ds);
+  const center = Date.UTC(y, mo - 1, d, 12, 0, 0);
+  const windowMs = 48 * 3600 * 1000;
+  for (let delta = -windowMs; delta <= windowMs; delta += 60 * 1000) {
+    const t = center + delta;
+    if (calendarDateInZone(new Date(t), timeZone) === label) {
+      let min = t;
+      for (
+        let u = t - 60 * 1000;
+        calendarDateInZone(new Date(u), timeZone) === label;
+        u -= 60 * 1000
+      ) {
+        min = u;
+      }
+      return min;
+    }
+  }
+  throw new Error(`Could not resolve wall start of ${ymd} in ${timeZone}`);
+}
+
+/**
+ * UTC milliseconds for the last instant of calendar day `ymd` in `timeZone`.
+ */
+export function endOfCalendarDayInZone(
+  ymd: string,
+  timeZone: string = getAppTimeZone(),
+): number {
+  return startOfCalendarDayInZone(addOneCivilDay(ymd), timeZone) - 1;
+}
+
 /**
  * Application wall-clock / scheduler IANA timezone (e.g. Asia/Ho_Chi_Minh for UTC+7).
  * Set APP_TIMEZONE in .env; defaults to Vietnam.

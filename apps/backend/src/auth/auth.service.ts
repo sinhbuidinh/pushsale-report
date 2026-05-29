@@ -19,12 +19,9 @@ export class AuthService {
   async validateUser(username: string, pass: string): Promise<SafeUser | null> {
     const user = await this.userRepo.findOne({ where: { username } });
     if (user && user.password && (await bcrypt.compare(pass, user.password))) {
-      return {
-        id: user.id,
-        username: user.username,
-        display_name: user.display_name,
-        type: user.type,
-      };
+      const { password, ...safeUser } = user;
+      void password;
+      return safeUser;
     }
     return null;
   }
@@ -52,15 +49,21 @@ export class AuthService {
   async seedAdmin() {
     const admin = await this.userRepo.findOne({ where: { username: 'admin' } });
     if (!admin) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
+      const seedPassword = process.env.DEFAULT_ADMIN_PASSWORD?.trim();
+      if (!seedPassword) {
+        throw new Error('DEFAULT_ADMIN_PASSWORD is not set');
+      }
+      const hashedPassword = await bcrypt.hash(seedPassword, 10);
       await this.userRepo.save({
         username: 'admin',
         password: hashedPassword,
         display_name: 'Administrator',
         type: 'admin',
       });
-      return 'Admin seeded with password: admin123';
+
+      return 'Admin seeded done';
     }
+
     return 'Admin already exists';
   }
 }

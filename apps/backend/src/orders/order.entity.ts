@@ -5,6 +5,10 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
+import {
+  EntityCreatedAtColumn,
+  EntityUpdatedAtColumn,
+} from '../common/entity-timestamps';
 import { Customer } from '../users/customer.entity';
 import { User } from '../users/user.entity';
 
@@ -66,4 +70,10 @@ export class Order {
 
   @Column({ nullable: true })
   updated_time: string;
+
+  @EntityCreatedAtColumn()
+  created_at: Date | null;
+
+  @EntityUpdatedAtColumn()
+  updated_at: Date | null;
 }

@@ -9,8 +9,11 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
 
@@ -50,6 +53,28 @@ export class ProductsController {
     }
   }
 
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  async importProducts(
+    @UploadedFile() file?: { buffer: Buffer; originalname?: string },
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('file is required (.xls)');
+    }
+    const name = (file.originalname ?? '').toLowerCase();
+    if (!name.endsWith('.xls') && !name.endsWith('.xlsx')) {
+      throw new BadRequestException('Only .xls or .xlsx files are supported');
+    }
+    try {
+      const data = await this.productsService.importProductsFromXls(
+        file.buffer,
+      );
+      return { status: true, data };
+    } catch (error) {
+      return { status: false, error: (error as Error).message };
+    }
+  }
+
   @Post(':productId/adaptions')
   async createFirstAdaption(
     @Param('productId', ParseIntPipe) productId: number,
@@ -59,6 +84,7 @@ export class ProductsController {
       end_date?: unknown;
       cost_price?: unknown;
       delivery_fee?: unknown;
+      tax_value?: unknown;
     },
   ) {
     const start_date =
@@ -78,12 +104,14 @@ export class ProductsController {
         'delivery_fee must be a non-negative number',
       );
     }
+    const tax_value = parseOptionalTaxValue(body.tax_value);
     try {
       const data = await this.productsService.createFirstAdaption(productId, {
         start_date,
         end_date,
         cost_price,
         delivery_fee,
+        tax_value,
       });
       return { status: true, data };
     } catch (error) {
@@ -100,7 +128,13 @@ export class ProductsController {
   @Patch('adaptions/:adaptionId')
   async patchAdaptionPrices(
     @Param('adaptionId', ParseIntPipe) adaptionId: number,
-    @Body() body: { cost_price?: unknown; delivery_fee?: unknown },
+    @Body()
+    body: {
+      cost_price?: unknown;
+      delivery_fee?: unknown;
+      selling_price?: unknown;
+      tax_value?: unknown;
+    },
   ) {
     const cost_price = Number(body.cost_price);
     const delivery_fee = Number(body.delivery_fee);
@@ -112,10 +146,23 @@ export class ProductsController {
         'delivery_fee must be a non-negative number',
       );
     }
+    let selling_price: number | undefined;
+    if (body.selling_price != null && body.selling_price !== '') {
+      const parsed = Number(body.selling_price);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new BadRequestException(
+          'selling_price must be a non-negative number',
+        );
+      }
+      selling_price = parsed;
+    }
+    const tax_value = parseOptionalTaxValue(body.tax_value);
     try {
       const data = await this.productsService.patchAdaptionPrices(adaptionId, {
         cost_price,
         delivery_fee,
+        selling_price,
+        tax_value,
       });
       return { status: true, data };
     } catch (error) {
@@ -125,4 +172,17 @@ export class ProductsController {
       return { status: false, error: (error as Error).message };
     }
   }
+}
+
+function parseOptionalTaxValue(raw: unknown): number | undefined {
+  if (raw == null || raw === '') {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new BadRequestException(
+      'tax_value must be a non-negative number (e.g. 6.5)',
+    );
+  }
+  return parsed;
 }

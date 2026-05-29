@@ -7,10 +7,23 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Like, Repository } from 'typeorm';
 import { Product } from './product.entity';
 import { ProductAdaption } from './product-adaption.entity';
+import {
+  parseProductRowsFromXls,
+  type ProductImportResult,
+  type ProductImportRow,
+} from '../products/product-import.util';
+import {
+  calendarMonthBoundsForDate,
+  getAppTimeZone,
+} from '../common/app-timezone';
 
 export interface PatchProductPricesDto {
   cost_price: number;
   delivery_fee: number;
+  /** When provided, updates the adaption's selling_price in place. */
+  selling_price?: number;
+  /** Optional product-level VAT percentage update (e.g. 6.5, 8.5). */
+  tax_value?: number;
 }
 
 /** List row: one per adaptation, or one placeholder when the product has no adaptations yet. */
@@ -22,7 +35,10 @@ export interface ProductListRow {
   start_date: string | null;
   end_date: string | null;
   cost_price: number;
+  selling_price: number;
   delivery_fee: number;
+  /** Product-level VAT percentage, e.g. 6.5, 8.5. */
+  tax_value: number;
   weight_gram: number;
 }
 
@@ -31,6 +47,8 @@ export interface CreateProductAdaptionDto {
   end_date: string;
   cost_price: number;
   delivery_fee: number;
+  /** Optional product-level VAT percentage update (e.g. 6.5, 8.5). */
+  tax_value?: number;
 }
 
 function calendarDateStr(d: Date): string {
@@ -154,7 +172,9 @@ export class ProductsService {
           start_date: null,
           end_date: null,
           cost_price: Number(p.cost_price),
+          selling_price: Number(p.selling_price),
           delivery_fee: Number(p.delivery_fee),
+          tax_value: Number(p.tax_value),
           weight_gram: p.weight_gram,
         });
       } else {
@@ -168,7 +188,9 @@ export class ProductsService {
             start_date: startStr,
             end_date: endStr,
             cost_price: Number(a.cost_price),
+            selling_price: Number(a.selling_price),
             delivery_fee: Number(a.delivery_fee),
+            tax_value: Number(p.tax_value),
             weight_gram: p.weight_gram,
           });
         }
@@ -204,6 +226,10 @@ export class ProductsService {
       throw new BadRequestException('start_date must be on or before end_date');
     }
 
+    if (dto.tax_value != null) {
+      await this.productRepo.update(productId, { tax_value: dto.tax_value });
+    }
+
     return this.adaptionRepo.save({
       product_id: productId,
       start_date: calendarStrToUtcNoonDate(dto.start_date),
@@ -225,10 +251,20 @@ export class ProductsService {
       throw new NotFoundException(`Product adaptation ${adaptionId} not found`);
     }
 
-    await this.adaptionRepo.update(adaptionId, {
+    const updatePayload: Partial<ProductAdaption> = {
       cost_price: dto.cost_price,
       delivery_fee: dto.delivery_fee,
-    });
+    };
+    if (dto.selling_price != null) {
+      updatePayload.selling_price = dto.selling_price;
+    }
+    await this.adaptionRepo.update(adaptionId, updatePayload);
+
+    if (dto.tax_value != null) {
+      await this.productRepo.update(adaption.product_id, {
+        tax_value: dto.tax_value,
+      });
+    }
 
     const updated = await this.adaptionRepo.findOne({
       where: { id: adaptionId },
@@ -237,5 +273,106 @@ export class ProductsService {
       throw new NotFoundException(`Product adaptation ${adaptionId} not found`);
     }
     return updated;
+  }
+
+  /**
+   * Imports rows from a Vietnamese product catalog .xls file.
+   * Upserts `product` by `item_code` and the current month's active `product_adaption`.
+   */
+  async importProductsFromXls(buffer: Buffer): Promise<ProductImportResult> {
+    const parsed = parseProductRowsFromXls(buffer);
+    const result: ProductImportResult = {
+      productsCreated: 0,
+      productsUpdated: 0,
+      adaptionsCreated: 0,
+      adaptionsUpdated: 0,
+      skipped: parsed.skipped,
+      errors: [...parsed.errors],
+    };
+
+    if (parsed.rows.length === 0) {
+      return result;
+    }
+
+    const tz = getAppTimeZone();
+    const { startStr, endStr, todayStr } = calendarMonthBoundsForDate(
+      new Date(),
+      tz,
+    );
+    const monthStartDate = calendarStrToUtcNoonDate(startStr);
+    const monthEndDate = calendarStrToUtcNoonDate(endStr);
+
+    for (const row of parsed.rows) {
+      try {
+        await this.upsertProductRow(row, {
+          monthStartDate,
+          monthEndDate,
+          todayStr,
+          result,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`Row ${row.rowNumber}: ${msg}`);
+      }
+    }
+
+    return result;
+  }
+
+  private async upsertProductRow(
+    row: ProductImportRow,
+    ctx: {
+      monthStartDate: Date;
+      monthEndDate: Date;
+      todayStr: string;
+      result: ProductImportResult;
+    },
+  ): Promise<void> {
+    let product = await this.productRepo.findOne({
+      where: { item_code: row.item_code },
+    });
+
+    if (product) {
+      await this.productRepo.update(product.id, {
+        item_name: row.item_name,
+        cost_price: row.cost_price,
+        weight_gram: row.weight_gram,
+      });
+      ctx.result.productsUpdated++;
+    } else {
+      product = await this.productRepo.save({
+        item_code: row.item_code,
+        item_name: row.item_name,
+        cost_price: row.cost_price,
+        selling_price: row.selling_price,
+        delivery_fee: 0,
+        weight_gram: row.weight_gram,
+      });
+      ctx.result.productsCreated++;
+    }
+
+    const adaption = await this.findAdaptionActiveOnCalendarDate(
+      product.id,
+      ctx.todayStr,
+    );
+
+    if (adaption) {
+      await this.adaptionRepo.update(adaption.id, {
+        cost_price: row.cost_price,
+        selling_price: row.selling_price,
+      });
+      ctx.result.adaptionsUpdated++;
+      return;
+    }
+
+    await this.adaptionRepo.save({
+      product_id: product.id,
+      start_date: ctx.monthStartDate,
+      end_date: ctx.monthEndDate,
+      cost_price: row.cost_price,
+      selling_price: row.selling_price,
+      delivery_fee: 0,
+    });
+    ctx.result.adaptionsCreated++;
   }
 }

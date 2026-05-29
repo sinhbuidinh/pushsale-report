@@ -53,4 +53,15 @@ export function hasValidSession(): boolean {
   return getValidAuthToken() != null && typeof getStoredUser()?.type === 'string';
 }
 
+/**
+ * Default landing route inside the admin panel for a given user role.
+ * Marketing users don't have the sync dashboard, so they land on their own
+ * Marketing Summary page instead.
+ */
+export function getDefaultLandingPath(userType: string | null | undefined): string {
+  const base = `/${PANEL_PREFIX}`;
+  if (userType === 'marketing') return `${base}/marketing-summary`;
+  return `${base}/dashboard`;
+}
+
 export { PANEL_PREFIX, AUTH_TOKEN_KEY, AUTH_USER_KEY };

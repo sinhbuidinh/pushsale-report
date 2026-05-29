@@ -15,6 +15,7 @@ import { User } from '../users/user.entity';
 import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
+import { OrderDetail } from '../orders/order-detail.entity';
 import {
   PushSaleTypeDate,
   SyncStatus,
@@ -25,7 +26,10 @@ import {
   getAppTimeZone,
   yesterdayCalendarInZone,
 } from '../common/app-timezone';
-import { httpErrorMessage } from '../common/http-error.util';
+import {
+  httpErrorMessage,
+  isRetryableHttpError,
+} from '../common/http-error.util';
 import { HttpRetryService } from '../common/http-retry.service';
 import { PUSHSALE_REQUEST_INTERVAL_MS } from '../common/pushsale-request-interval';
 import {
@@ -55,6 +59,9 @@ const PUSHSALE_RETRYABLE_ERROR_SNIPPETS: readonly string[] = [
   'socket hang up',
   '429',
   'too many requests',
+  // PushSale body-level errorCode returned with HTTP 200 + successful=false
+  // when the caller exceeds their min-interval throttle.
+  'time_limit',
 ];
 
 interface PushSaleGetOrderResponseBody {
@@ -68,7 +75,9 @@ interface PushSaleOrderDetail {
   itemCode: string;
   itemName: string;
   weightGram?: number;
+  quantity?: number;
   price?: number;
+  totalPrice?: number;
 }
 
 interface PushSaleOrderPayload {
@@ -97,10 +106,25 @@ interface PushSaleOrderPayload {
   updateTime?: string | Date;
 }
 
+/** Order entity stores these columns as strings; API may send Date. */
+function optionalDateTimeString(
+  v: string | Date | undefined,
+): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'string') return v;
+  return v.toISOString();
+}
+
 @Injectable()
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SyncService.name);
   private dailyCronJob: CronJob | null = null;
+  /**
+   * In-process lock: a single PushSale order sync can saturate PushSale's
+   * per-token throttle, and overlapping runs against the same date corrupt
+   * sync_logs rows. We never want two background syncs in flight at once.
+   */
+  private isSyncRunning = false;
 
   constructor(
     @InjectRepository(Product)
@@ -113,6 +137,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     private adaptionRepo: Repository<ProductAdaption>,
     @InjectRepository(Order)
     private orderRepo: Repository<Order>,
+    @InjectRepository(OrderDetail)
+    private orderDetailRepo: Repository<OrderDetail>,
     private syncLogRepo: SyncLogRepository,
     private readonly httpRetryService: HttpRetryService,
   ) {}
@@ -130,6 +156,13 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       timeZone,
     );
     this.dailyCronJob.start();
+    this.logger.log(
+      `Daily PushSale sync cron registered: "${cronExpression}" (${timeZone}).`,
+    );
+
+    // Self-heal a missed daily run (process was down at the cron's fire time):
+    // on every boot, if yesterday's sync did not finish successfully, kick it off now.
+    void this.catchUpMissedDailySync();
   }
 
   onModuleDestroy(): void {
@@ -140,7 +173,36 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   handleDailySync(): void {
     this.logger.log('Starting automated daily PushSale sync...');
     this.syncOrdersFromPushSale(undefined, 1, SyncTriggerSource.Cron);
-    this.logger.log('Automated daily PushSale sync completed.');
+    this.logger.log('Automated daily PushSale sync dispatched.');
+  }
+
+  /**
+   * Runs once at boot. If the previous calendar day in APP_TIMEZONE has no
+   * successful sync_log row, triggers a sync for that day. Older missed days
+   * still need to be re-synced manually via POST /sync/orders.
+   */
+  private async catchUpMissedDailySync(): Promise<void> {
+    try {
+      const yesterday = yesterdayCalendarInZone(getAppTimeZone());
+      const lastSuccess = await this.syncLogRepo.findOne({
+        where: { sync_date: yesterday, status: SyncStatus.Success },
+        order: { id: 'DESC' },
+      });
+      if (lastSuccess) {
+        this.logger.log(
+          `Startup catch-up: sync for ${yesterday} already succeeded (sync_log #${lastSuccess.id}); nothing to do.`,
+        );
+        return;
+      }
+      this.logger.warn(
+        `Startup catch-up: no successful sync for ${yesterday}; triggering sync now.`,
+      );
+      this.syncOrdersFromPushSale(yesterday, 1, SyncTriggerSource.Cron);
+    } catch (err) {
+      this.logger.error(
+        `Startup catch-up failed: ${httpErrorMessage(err)}. Daily cron will still run as scheduled.`,
+      );
+    }
   }
 
   async getSyncLogs(page: number = 1, limit: number = 10) {
@@ -166,12 +228,31 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   ) {
     const dateStr = targetDate || yesterdayCalendarInZone(getAppTimeZone());
 
-    // Fire and forget
-    this.runBackgroundSync(dateStr, pageBegin, triggerSource).catch((err) =>
-      this.logger.error(
-        `Background sync failed for ${dateStr}: ${httpErrorMessage(err)}`,
-      ),
-    );
+    if (this.isSyncRunning) {
+      this.logger.warn(
+        `Sync request for ${dateStr} (trigger=${triggerSource}) ignored: another sync is already running.`,
+      );
+      return {
+        status: 'skipped',
+        date: dateStr,
+        pageBegin,
+        trigger_source: triggerSource,
+        message:
+          'Another PushSale sync is already in progress; this request was ignored.',
+      };
+    }
+    this.isSyncRunning = true;
+
+    // Fire and forget; lock is released in finally so a crash never leaves it stuck.
+    this.runBackgroundSync(dateStr, pageBegin, triggerSource)
+      .catch((err) =>
+        this.logger.error(
+          `Background sync failed for ${dateStr}: ${httpErrorMessage(err)}`,
+        ),
+      )
+      .finally(() => {
+        this.isSyncRunning = false;
+      });
 
     return {
       status: 'initiated',
@@ -231,36 +312,51 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           .update(`${apiToken}_${pageIndex}_${typeDate}`)
           .digest('hex');
 
-        const {
-          response,
-          durationMs,
-          requestStartedAt: pageRequestStartedAt,
-        } = await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
-          `${apiUrl}/GetOrderByConditions`,
-          {
-            clientId,
-            secureToken,
-            pageIndex,
-            pageSize: 100,
-            fromDate,
-            toDate,
-            typeDate,
-            isIncludeDetail: 1,
-          },
-          PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
-        );
+        // Per-page retry loop: re-issues the same request when PushSale returns
+        // a retryable body-level errorCode (e.g. "time_limit") in addition to
+        // the transport-level retries handled inside postJsonWithRetry.
+        let results: unknown[] | undefined;
+        let pageRequestStartedAt = 0;
+        for (;;) {
+          try {
+            const attempt =
+              await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
+                `${apiUrl}/GetOrderByConditions`,
+                {
+                  clientId,
+                  secureToken,
+                  pageIndex,
+                  pageSize: 100,
+                  fromDate,
+                  toDate,
+                  typeDate,
+                  isIncludeDetail: 1,
+                },
+                PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
+              );
+            pageRequestStartedAt = attempt.requestStartedAt;
 
-        const httpDur = durationPartsFromMs(durationMs);
-        this.logger.log(
-          `GetOrderByConditions for ${dateStr} page ${currentPage}: HTTP round-trip ${httpDur.ms} ms (${httpDur.sec} s)`,
-        );
+            const httpDur = durationPartsFromMs(attempt.durationMs);
+            this.logger.log(
+              `GetOrderByConditions for ${dateStr} page ${currentPage}: HTTP round-trip ${httpDur.ms} ms (${httpDur.sec} s)`,
+            );
 
-        const resData = response.data;
-        if (resData && resData.successful === false) {
-          throw new Error(`${resData.errorCode}: ${resData.errorMessage}`);
+            const resData = attempt.response.data;
+            if (resData && resData.successful === false) {
+              throw new Error(`${resData.errorCode}: ${resData.errorMessage}`);
+            }
+            results = resData?.result;
+            break;
+          } catch (err) {
+            if (!isRetryableHttpError(err, PUSHSALE_RETRYABLE_ERROR_SNIPPETS)) {
+              throw err;
+            }
+            this.logger.warn(
+              `Page ${currentPage} for ${dateStr} retryable error: ${httpErrorMessage(err)}. Waiting ${PUSHSALE_REQUEST_INTERVAL_MS} ms before retry.`,
+            );
+            await this.sleepMs(PUSHSALE_REQUEST_INTERVAL_MS);
+          }
         }
-
-        const results = resData?.result;
 
         if (!results || results.length === 0) {
           const pageDur = durationPartsSince(pageHandledStartedAt);
@@ -394,6 +490,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const monthEndDate = calendarStrToUtcNoonDate(endStr);
 
     for (const detail of data.details || []) {
+      if (!detail.itemCode) {
+        continue;
+      }
+
       let product = await this.productRepo.findOne({
         where: { item_code: detail.itemCode },
       });
@@ -447,18 +547,43 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       total_shipping_cost: data.totalShippingCost || 0,
       total_cod: data.totalCod || 0,
       reason_create: data.reasonToCreate,
-      confirm_time: data.orderConfirmDate,
-      created_time: data.createTime,
-      updated_time: data.updateTime,
+      confirm_time: optionalDateTimeString(data.orderConfirmDate),
+      created_time: optionalDateTimeString(data.createTime),
+      updated_time: optionalDateTimeString(data.updateTime),
     };
 
     const existingOrder = await this.orderRepo.findOne({
       where: { order_number: orderPayload.order_number },
     });
-    if (existingOrder) {
-      await this.orderRepo.save({ id: existingOrder.id, ...orderPayload });
-    } else {
-      await this.orderRepo.save(orderPayload);
+    const savedOrder = existingOrder
+      ? await this.orderRepo.save({ id: existingOrder.id, ...orderPayload })
+      : await this.orderRepo.save(orderPayload);
+
+    // Replace order_details with a fresh snapshot from the PushSale payload.
+    // PushSale is the source of truth for the line items, so on every sync we
+    // drop the prior rows for this order and re-insert.
+    await this.orderDetailRepo
+      .createQueryBuilder()
+      .delete()
+      .where('order_id = :orderId', { orderId: savedOrder.id })
+      .execute();
+
+    const detailRows = (data.details || [])
+      .filter((d) => !!d.itemCode)
+      .map((d) =>
+        // build instances in memory
+        this.orderDetailRepo.create({
+          order: { id: savedOrder.id } as Order,
+          item_code: d.itemCode,
+          item_name: d.itemName,
+          quantity: d.quantity ?? 0,
+          price: d.price ?? 0,
+          total_price: d.totalPrice ?? 0,
+        }),
+      );
+    if (detailRows.length > 0) {
+      // one batched DB insert
+      await this.orderDetailRepo.save(detailRows);
     }
   }
 

@@ -11,7 +11,11 @@ import {
   Alert
 } from '@mui/material';
 import { LockOutlined as LockOutlinedIcon } from '@mui/icons-material';
-import { AUTH_TOKEN_KEY, AUTH_USER_KEY, PANEL_PREFIX } from '../../../shared/auth/authStorage';
+import {
+  AUTH_TOKEN_KEY,
+  AUTH_USER_KEY,
+  getDefaultLandingPath,
+} from '../../../shared/auth/authStorage';
 
 const LoginPage = () => {
   const [username, setUsername] = useState('');
@@ -55,7 +59,7 @@ const LoginPage = () => {
         }
         localStorage.setItem(AUTH_TOKEN_KEY, accessToken);
         localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-        navigate(`/${PANEL_PREFIX}/dashboard`, { replace: true });
+        navigate(getDefaultLandingPath(user?.type), { replace: true });
       } else {
         setError('Invalid username or password');
       }

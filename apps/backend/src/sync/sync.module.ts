@@ -8,10 +8,13 @@ import { User } from '../users/user.entity';
 import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
+import { OrderDetail } from '../orders/order-detail.entity';
 import { SyncLog } from './sync-log.entity';
 import { SyncLogRepository } from './sync-log.repository';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
+import { FacebookAdsInsightsSnapshot } from './facebook-ads-insights-snapshot.entity';
 import { FacebookAdsSyncService } from './facebook-ads-sync.service';
+import { AdsAccount } from '../users/ads-account.entity';
 
 @Module({
   imports: [
@@ -22,8 +25,11 @@ import { FacebookAdsSyncService } from './facebook-ads-sync.service';
       Customer,
       ProductAdaption,
       Order,
+      OrderDetail,
       SyncLog,
       FacebookAdsDailyCost,
+      FacebookAdsInsightsSnapshot,
+      AdsAccount,
     ]),
   ],
   controllers: [SyncController],

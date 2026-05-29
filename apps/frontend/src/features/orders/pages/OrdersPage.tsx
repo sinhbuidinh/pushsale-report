@@ -47,6 +47,19 @@ interface OrderFilterUsersResponse {
   sale: OrderFilterUser[];
 }
 
+/**
+ * Render an upstream timestamp string (e.g. `2026-05-25T23:49:41.133`) as
+ * `YYYY-MM-DD HH:mm:ss`. The values are already in Vietnam local time, so we
+ * just normalize the separator and drop sub-second precision instead of
+ * round-tripping through `new Date()` (which would interpret the missing
+ * timezone as UTC and shift the wall clock).
+ */
+const fmtDateTime = (s: string | null | undefined): string => {
+  if (!s) return '—';
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/.exec(s);
+  return m ? `${m[1]} ${m[2]}` : s;
+};
+
 const OrdersPage = () => {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
@@ -275,9 +288,9 @@ const OrdersPage = () => {
                 <TableCell align="right">{Number(order.total_shipping_cost).toLocaleString()}</TableCell>
                 <TableCell align="right">{Number(order.total_price).toLocaleString()}</TableCell>
                 <TableCell>{order.reason_create}</TableCell>
-                <TableCell>{order.confirm_time}</TableCell>
-                <TableCell>{order.created_time}</TableCell>
-                <TableCell>{order.updated_time}</TableCell>
+                <TableCell>{fmtDateTime(order.confirm_time)}</TableCell>
+                <TableCell>{fmtDateTime(order.created_time)}</TableCell>
+                <TableCell>{fmtDateTime(order.updated_time)}</TableCell>
               </TableRow>
             ))}
             {data?.data.length === 0 && (
