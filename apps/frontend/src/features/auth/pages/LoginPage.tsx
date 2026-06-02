@@ -63,7 +63,7 @@ const LoginPage = () => {
       } else {
         setError('Invalid username or password');
       }
-    } catch (err) {
+    } catch {
       setError('Connection to backend failed');
     }
   };
