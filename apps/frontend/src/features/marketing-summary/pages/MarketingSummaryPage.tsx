@@ -60,7 +60,7 @@ interface MarketingSummaryRow {
   revenue_estimate: number;
   revenue_tax: number;
   total_cost: number;
-  total_cost_include_tax: number;
+  total_cost_est: number;
   risk_fee: number;
   total_delivery_fee: number;
   ads_per_revenue_pct: number | null;
@@ -81,7 +81,7 @@ interface MarketingSummaryTotals {
   revenue_estimate: number;
   revenue_tax: number;
   total_cost: number;
-  total_cost_include_tax: number;
+  total_cost_est: number;
   risk_fee: number;
   total_delivery_fee: number;
   profit: number;
@@ -160,7 +160,7 @@ interface PresetOption {
 const PRESETS: PresetOption[] = [
   {
     key: 'today',
-    label: 'Today',
+    label: 'Hôm nay',
     build: (now) => ({
       start: ymdLocal(now),
       end: ymdLocal(now),
@@ -169,7 +169,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'yesterday',
-    label: 'Yesterday',
+    label: 'Hôm qua',
     build: (now) => {
       const y = addDays(now, -1);
       return { start: ymdLocal(y), end: ymdLocal(y), isRange: false };
@@ -177,7 +177,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'last_7_days',
-    label: 'Last 7 days',
+    label: '7 ngày qua',
     build: (now) => ({
       start: ymdLocal(addDays(now, -6)),
       end: ymdLocal(now),
@@ -186,7 +186,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'last_30_days',
-    label: 'Last 30 days',
+    label: '30 ngày qua',
     build: (now) => ({
       start: ymdLocal(addDays(now, -29)),
       end: ymdLocal(now),
@@ -195,7 +195,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'this_week',
-    label: 'This week',
+    label: 'Tuần này',
     build: (now) => ({
       start: ymdLocal(startOfWeek(now)),
       end: ymdLocal(now),
@@ -204,7 +204,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'last_week',
-    label: 'Last week',
+    label: 'Tuần trước',
     build: (now) => {
       const thisMon = startOfWeek(now);
       const lastSun = addDays(thisMon, -1);
@@ -218,7 +218,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'this_month',
-    label: 'This month',
+    label: 'Tháng này',
     build: (now) => ({
       start: ymdLocal(startOfMonth(now)),
       end: ymdLocal(now),
@@ -227,7 +227,7 @@ const PRESETS: PresetOption[] = [
   },
   {
     key: 'last_month',
-    label: 'Last month',
+    label: 'Tháng trước',
     build: (now) => {
       const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       return {
@@ -329,16 +329,16 @@ const FormulaTooltip: React.FC<{
 const METRICS: MetricDef[] = [
   {
     key: 'selling_price',
-    label: 'Unit selling price',
+    label: 'Giá bán (1sp)',
     format: 'number',
-    tooltip: 'Selling price for one unit of this product.',
+    tooltip: 'Giá bán cho một đơn vị sản phẩm.',
     value: (r) => r.selling_price,
     unmatched: () => null,
     total: () => null,
   },
   {
     key: 'revenue',
-    label: 'Revenue',
+    label: 'Doanh thu',
     format: 'number',
     value: (r) => r.revenue,
     unmatched: () => null,
@@ -346,7 +346,9 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'revenue_estimate',
-    label: 'Revenue est. (×0.8)',
+    label: 'Doanh thu ước tính (×0.8)',
+    tooltip:
+      'Doanh thu × 0,8. Chỉ là ước tính vì đơn hàng có thể được hoàn/trả.',
     format: 'number',
     value: (r) => r.revenue_estimate,
     unmatched: () => null,
@@ -354,9 +356,9 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'revenue_tax',
-    label: 'Revenue tax (VAT)',
+    label: 'Thuế doanh thu (VAT)',
     format: 'number',
-    tooltip: 'Revenue est. × product VAT % (per row).',
+    tooltip: 'Doanh thu ước tính × % VAT của sản phẩm (theo từng dòng).',
     value: (r) => r.revenue_tax,
     unmatched: () => null,
     total: (t) => t.revenue_tax,
@@ -365,34 +367,35 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'cost_price',
-    label: 'Unit cost (1 product)',
+    label: 'Giá vốn (1 sp)',
     format: 'number',
     tooltip:
-      'Cost price for one unit of this product (from the active product adaptation).',
+      'Giá vốn cho một sản phẩm (Giá có thể thay đổi theo tháng).',
     value: (r) => r.cost_price,
     unmatched: () => null,
     total: () => null,
   },
   {
     key: 'total_cost',
-    label: 'Total cost',
+    label: 'Tổng giá vốn',
     format: 'number',
     value: (r) => r.total_cost,
     unmatched: () => null,
     total: (t) => t.total_cost,
   },
   {
-    key: 'total_cost_include_tax',
-    label: 'Total cost include tax (8%)',
+    key: 'total_cost_est',
+    label: 'Tổng giá vốn ước tính (×0.8)',
     format: 'number',
-    tooltip: 'Total cost × 1.08 (8% VAT on product cost).',
-    value: (r) => r.total_cost_include_tax,
+    tooltip:
+      'Tổng giá vốn × 0,8. Chỉ là ước tính vì đơn hàng có thể được hoàn/trả.',
+    value: (r) => r.total_cost_est,
     unmatched: () => null,
-    total: (t) => t.total_cost_include_tax,
+    total: (t) => t.total_cost_est,
   },
   {
     key: 'risk_fee',
-    label: 'Risk fee (10% total cost include tax)',
+    label: 'Phí rủi ro (10% tổng giá vốn ước tính)',
     format: 'number',
     value: (r) => r.risk_fee,
     unmatched: () => null,
@@ -400,16 +403,16 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'delivery_fee_per_unit',
-    label: 'Unit delivery fee',
+    label: 'Phí vận chuyển (1 sp)',
     format: 'number',
-    tooltip: 'Delivery fee charged per unit of this product.',
+    tooltip: 'Phí vận chuyển tính trên mỗi đơn vị sản phẩm.',
     value: (r) => r.delivery_fee_per_unit,
     unmatched: () => null,
     total: () => null,
   },
   {
     key: 'total_delivery_fee',
-    label: 'Total delivery fee',
+    label: 'Tổng phí vận chuyển',
     format: 'number',
     value: (r) => r.total_delivery_fee,
     unmatched: () => null,
@@ -417,7 +420,7 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'ads_spend',
-    label: 'Ads',
+    label: 'Quảng cáo',
     format: 'number',
     value: (r) => r.ads_spend,
     unmatched: (u) => u.ads_spend,
@@ -425,7 +428,7 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'tax_ads',
-    label: 'Tax ads (10%)',
+    label: 'Thuế quảng cáo (10%)',
     format: 'number',
     value: (r) => r.tax_ads,
     unmatched: (u) => u.tax_ads,
@@ -433,7 +436,7 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'ads_per_revenue_pct',
-    label: '% Ads / Revenue est',
+    label: '% Quảng cáo / Doanh thu ước tính',
     format: 'percent',
     value: (r) => r.ads_per_revenue_pct,
     unmatched: () => null,
@@ -441,21 +444,21 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'profit',
-    label: 'Profit',
+    label: 'Lợi nhuận',
     format: 'number',
     emphasize: true,
     tooltip: (
       <FormulaTooltip
-        result="Profit"
+        result="Lợi nhuận"
         operands={[
-          { sign: '=', label: 'Revenue est. (×0.8)' },
-          { sign: '−', label: 'Revenue tax (VAT)' },
-          { sign: '−', label: 'Total cost include tax (8%)' },
-          { sign: '−', label: 'Risk fee (10% total cost include tax)' },
-          { sign: '−', label: 'Total delivery fee' },
-          { sign: '−', label: 'Tax ads (10%)' },
+          { sign: '=', label: 'Doanh thu ước tính' },
+          { sign: '−', label: 'Thuế doanh thu (VAT)' },
+          { sign: '−', label: 'Tổng giá vốn ước tính' },
+          { sign: '−', label: 'Phí rủi ro' },
+          { sign: '−', label: 'Tổng phí vận chuyển' },
+          { sign: '−', label: 'Thuế quảng cáo (10%)' },
         ]}
-        note="Unmatched ads are not charged against profit."
+        note="Quảng cáo không khớp không bị trừ vào lợi nhuận."
       />
     ),
     value: (r) => r.profit,
@@ -464,7 +467,7 @@ const METRICS: MetricDef[] = [
   },
   {
     key: 'profit_per_revenue_pct',
-    label: '% Profit / Revenue est',
+    label: '% Lợi nhuận / Doanh thu ước tính',
     format: 'percent',
     emphasize: true,
     value: (r) => r.profit_per_revenue_pct,
@@ -619,7 +622,7 @@ const MarketingSummaryPage: React.FC = () => {
           mb: 2,
         }}
       >
-        <Typography variant="h4">Marketing Summary</Typography>
+        <Typography variant="h4">Báo cáo bán hàng</Typography>
       </Box>
 
       <Paper
@@ -654,9 +657,9 @@ const MarketingSummaryPage: React.FC = () => {
         )}
 
         <FormControl size="small" sx={{ minWidth: 170 }}>
-          <InputLabel>Quick select</InputLabel>
+          <InputLabel>Chọn nhanh ngày</InputLabel>
           <Select
-            label="Quick select"
+            label="Chọn nhanh ngày"
             value={presetKey}
             onChange={(e) => {
               const k = e.target.value as string;
@@ -669,7 +672,7 @@ const MarketingSummaryPage: React.FC = () => {
             sx={{ bgcolor: 'action.hover' }}
           >
             <MenuItem value="">
-              <em>Custom</em>
+              <em>Tùy chọn</em>
             </MenuItem>
             {PRESETS.map((p) => (
               <MenuItem key={p.key} value={p.key}>
@@ -692,7 +695,7 @@ const MarketingSummaryPage: React.FC = () => {
               }}
             />
           }
-          label="Date range"
+          label="Khoảng ngày"
           sx={{ ml: 0 }}
         />
 
@@ -701,7 +704,7 @@ const MarketingSummaryPage: React.FC = () => {
             variant="caption"
             sx={{ color: 'text.secondary', fontWeight: 'bold', ml: 1 }}
           >
-            {isRange ? 'Start date' : 'Date'}
+            {isRange ? 'Từ ngày' : 'Ngày'}
           </Typography>
           <TextField
             size="small"
@@ -725,7 +728,7 @@ const MarketingSummaryPage: React.FC = () => {
               variant="caption"
               sx={{ color: 'text.secondary', fontWeight: 'bold', ml: 1 }}
             >
-              End date
+              Đến ngày
             </Typography>
             <TextField
               size="small"
@@ -752,7 +755,7 @@ const MarketingSummaryPage: React.FC = () => {
             disabled={!canSubmit || isFetching}
             sx={{ height: 40 }}
           >
-            Summary
+            Xem báo cáo
           </Button>
           <Button
             variant="outlined"
@@ -774,17 +777,36 @@ const MarketingSummaryPage: React.FC = () => {
 
       {!submitted && !error && (
         <Alert severity="info">
-          {isMarketingUser ? (
-            <>
-              Pick a date (or toggle <strong>Date range</strong>) then click{' '}
-              <strong>Summary</strong>.
-            </>
-          ) : (
-            <>
-              Select a marketing user and one or more dates, then click{' '}
-              <strong>Summary</strong>.
-            </>
-          )}
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+            Bạn có thể xem báo cáo theo 2 cách:
+          </Typography>
+          <Box component="ol" sx={{ m: 0, pl: 2.5 }}>
+            {isMarketingUser ? (
+              <>
+                <Box component="li" sx={{ mb: 0.75 }}>
+                  Chọn <strong>Ngày</strong> muốn xem, xong nhấn{' '}
+                  <strong>Xem báo cáo</strong>.
+                </Box>
+                <Box component="li">
+                  Nhấn <strong>Khoảng ngày</strong>, chọn <strong>Từ ngày</strong>{' '}
+                  và <strong>Đến ngày</strong> mong muốn, xong nhấn{' '}
+                  <strong>Xem báo cáo</strong>.
+                </Box>
+              </>
+            ) : (
+              <>
+                <Box component="li" sx={{ mb: 0.75 }}>
+                  Chọn người dùng marketing và chọn ngày muốn xem, xong nhấn{' '}
+                  <strong>Xem báo cáo</strong>.
+                </Box>
+                <Box component="li">
+                  Chọn người dùng marketing và nhấn <strong>Khoảng ngày</strong>,
+                  sau đó chọn <strong>Từ ngày</strong> và <strong>Đến ngày</strong>{' '}
+                  mong muốn, xong nhấn <strong>Xem báo cáo</strong>.
+                </Box>
+              </>
+            )}
+          </Box>
         </Alert>
       )}
 
@@ -867,19 +889,19 @@ const MarketingSummaryPage: React.FC = () => {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 700 }}>Period</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Kỳ</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Confirmed orders
+                    Đơn đã xác nhận
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>Ads account</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Tài khoản quảng cáo</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Unmatched ads
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Profit
+                    Quảng cáo không khớp
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    %Profit/Revenue
+                    Lợi nhuận
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    % Lợi nhuận/Doanh thu
                   </TableCell>
                 </TableRow>
               </TableHead>
@@ -897,7 +919,7 @@ const MarketingSummaryPage: React.FC = () => {
                     )}
                   </TableCell>
                   <TableCell align="right">
-                    <Tooltip title="Sum of ads spend whose campaign name did not match any product. Not charged against profit.">
+                    <Tooltip title="Tổng chi phí quảng cáo có tên chiến dịch không khớp sản phẩm nào. Không bị trừ vào lợi nhuận.">
                       <Typography
                         component="span"
                         sx={{ fontWeight: 700, color: 'warning.dark' }}
@@ -933,7 +955,7 @@ const MarketingSummaryPage: React.FC = () => {
             <Table size="small" sx={{ minWidth: 720 }}>
               <TableHead>
                 <TableRow>
-                  <StickyHeadCell>Metric</StickyHeadCell>
+                  <StickyHeadCell>Chỉ số</StickyHeadCell>
                   {data.rows.map((row) => (
                     <TableCell
                       key={row.product_id}
@@ -966,7 +988,7 @@ const MarketingSummaryPage: React.FC = () => {
                           variant="caption"
                           sx={{ color: 'text.secondary' }}
                         >
-                          Qty: <strong>{fmtNum(row.total_quantity)}</strong>
+                          SL: <strong>{fmtNum(row.total_quantity)}</strong>
                         </Typography>
                       </Box>
                     </TableCell>
@@ -985,7 +1007,7 @@ const MarketingSummaryPage: React.FC = () => {
                         variant="body2"
                         sx={{ fontWeight: 700, lineHeight: 1.2 }}
                       >
-                        Unmatched
+                        Không khớp
                       </Typography>
                       <Typography
                         variant="caption"
@@ -997,7 +1019,7 @@ const MarketingSummaryPage: React.FC = () => {
                         variant="caption"
                         sx={{ color: 'text.secondary' }}
                       >
-                        Qty: <strong>—</strong>
+                        SL: <strong>—</strong>
                       </Typography>
                     </Box>
                   </TableCell>
@@ -1015,19 +1037,19 @@ const MarketingSummaryPage: React.FC = () => {
                         variant="body2"
                         sx={{ fontWeight: 700, lineHeight: 1.2 }}
                       >
-                        TOTAL
+                        TỔNG CỘNG
                       </Typography>
                       <Typography
                         variant="caption"
                         sx={{ color: 'text.secondary', fontWeight: 500 }}
                       >
-                        all products + unmatched
+                        tất cả sản phẩm + không khớp
                       </Typography>
                       <Typography
                         variant="caption"
                         sx={{ color: 'text.secondary' }}
                       >
-                        Qty:{' '}
+                        SL:{' '}
                         <strong>{fmtNum(data.totals.total_quantity)}</strong>
                       </Typography>
                     </Box>
