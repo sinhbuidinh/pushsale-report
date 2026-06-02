@@ -246,7 +246,7 @@ export function parseProductRowsFromXls(
       skipped++;
       continue;
     }
-    if (!itemCode) {
+    if (!itemCode || itemCode === '0') {
       skipped++;
       errors.push(`Row ${rowNumber}: missing "${HEADER_ITEM_CODE}"`);
       continue;
