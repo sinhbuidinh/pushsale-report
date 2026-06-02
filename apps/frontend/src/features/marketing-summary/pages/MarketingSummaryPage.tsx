@@ -60,6 +60,7 @@ interface MarketingSummaryRow {
   revenue_estimate: number;
   revenue_tax: number;
   total_cost: number;
+  total_cost_include_tax: number;
   risk_fee: number;
   total_delivery_fee: number;
   ads_per_revenue_pct: number | null;
@@ -80,6 +81,7 @@ interface MarketingSummaryTotals {
   revenue_estimate: number;
   revenue_tax: number;
   total_cost: number;
+  total_cost_include_tax: number;
   risk_fee: number;
   total_delivery_fee: number;
   profit: number;
@@ -380,8 +382,17 @@ const METRICS: MetricDef[] = [
     total: (t) => t.total_cost,
   },
   {
+    key: 'total_cost_include_tax',
+    label: 'Total cost include tax (8%)',
+    format: 'number',
+    tooltip: 'Total cost × 1.08 (8% VAT on product cost).',
+    value: (r) => r.total_cost_include_tax,
+    unmatched: () => null,
+    total: (t) => t.total_cost_include_tax,
+  },
+  {
     key: 'risk_fee',
-    label: 'Risk fee (10% total cost)',
+    label: 'Risk fee (10% total cost include tax)',
     format: 'number',
     value: (r) => r.risk_fee,
     unmatched: () => null,
@@ -439,8 +450,8 @@ const METRICS: MetricDef[] = [
         operands={[
           { sign: '=', label: 'Revenue est. (×0.8)' },
           { sign: '−', label: 'Revenue tax (VAT)' },
-          { sign: '−', label: 'Total cost' },
-          { sign: '−', label: 'Risk fee (10% total cost)' },
+          { sign: '−', label: 'Total cost include tax (8%)' },
+          { sign: '−', label: 'Risk fee (10% total cost include tax)' },
           { sign: '−', label: 'Total delivery fee' },
           { sign: '−', label: 'Tax ads (10%)' },
         ]}
