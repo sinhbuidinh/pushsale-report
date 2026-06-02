@@ -431,11 +431,7 @@ export class MarketingSummaryService {
 
       const profit =
         revenueEstimate -
-        (revenueTax +
-          taxAds +
-          totalCostEst +
-          riskFee +
-          totalDeliveryFee);
+        (revenueTax + taxAds + totalCostEst + riskFee + totalDeliveryFee);
 
       const adsPerRevenuePct =
         revenueEstimate > 0 ? (adsSpend / revenueEstimate) * 100 : null;
