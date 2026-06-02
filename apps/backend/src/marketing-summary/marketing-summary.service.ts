@@ -14,8 +14,8 @@ const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** Multipliers / rates derived from the spec (see screenshot). */
 const REVENUE_RETURN_FACTOR = 0.8; // doanh thu thực hoàn ~ 80% (returns adjustment)
 const ADS_TAX_RATE = 0.1; // 10% tax of ads spend
-const COST_TAX_RATE = 0.08; // 8% VAT on product cost
-const RISK_FEE_RATE = 0.1; // 10% of total cost include tax
+const COST_ESTIMATE_FACTOR = 0.8; // estimated cost (some orders may be returned)
+const RISK_FEE_RATE = 0.1; // 10% of total cost estimate
 
 export interface MarketingSummaryQuery {
   marketing_user_id: number;
@@ -45,15 +45,15 @@ export interface MarketingSummaryProductRow {
   revenue_tax: number;
   /** total_quantity * cost_price. */
   total_cost: number;
-  /** total_cost * (1 + 8%). */
-  total_cost_include_tax: number;
-  /** total_cost_include_tax * 10%. */
+  /** total_cost * 0.8 (estimated; some orders may be returned). */
+  total_cost_est: number;
+  /** total_cost_est * 10%. */
   risk_fee: number;
   /** total_quantity * delivery_fee_per_unit. */
   total_delivery_fee: number;
   /** ads_spend / revenue_estimate * 100. Null when revenue_estimate is 0. */
   ads_per_revenue_pct: number | null;
-  /** revenue_estimate - revenue_tax - total_cost_include_tax - risk_fee - total_delivery_fee - tax_ads. */
+  /** revenue_estimate - revenue_tax - total_cost_est - risk_fee - total_delivery_fee - tax_ads. */
   profit: number;
   /** profit / revenue_estimate * 100. Null when revenue_estimate is 0. */
   profit_per_revenue_pct: number | null;
@@ -67,7 +67,7 @@ export interface MarketingSummaryTotals {
   revenue_estimate: number;
   revenue_tax: number;
   total_cost: number;
-  total_cost_include_tax: number;
+  total_cost_est: number;
   risk_fee: number;
   total_delivery_fee: number;
   profit: number;
@@ -425,17 +425,13 @@ export class MarketingSummaryService {
       const revenueEstimate = revenue * REVENUE_RETURN_FACTOR;
       const revenueTax = revenueEstimate * (taxValuePct / 100);
       const totalCost = qty * costPrice;
-      const totalCostIncludeTax = totalCost * (1 + COST_TAX_RATE);
-      const riskFee = totalCostIncludeTax * RISK_FEE_RATE;
+      const totalCostEst = totalCost * COST_ESTIMATE_FACTOR;
+      const riskFee = totalCostEst * RISK_FEE_RATE;
       const totalDeliveryFee = qty * deliveryFeePerUnit;
 
       const profit =
         revenueEstimate -
-        (revenueTax +
-          taxAds +
-          totalCostIncludeTax +
-          riskFee +
-          totalDeliveryFee);
+        (revenueTax + taxAds + totalCostEst + riskFee + totalDeliveryFee);
 
       const adsPerRevenuePct =
         revenueEstimate > 0 ? (adsSpend / revenueEstimate) * 100 : null;
@@ -457,7 +453,7 @@ export class MarketingSummaryService {
         revenue_estimate: revenueEstimate,
         revenue_tax: revenueTax,
         total_cost: totalCost,
-        total_cost_include_tax: totalCostIncludeTax,
+        total_cost_est: totalCostEst,
         risk_fee: riskFee,
         total_delivery_fee: totalDeliveryFee,
         ads_per_revenue_pct: adsPerRevenuePct,
@@ -482,7 +478,7 @@ export class MarketingSummaryService {
         | 'revenue_estimate'
         | 'revenue_tax'
         | 'total_cost'
-        | 'total_cost_include_tax'
+        | 'total_cost_est'
         | 'risk_fee'
         | 'total_delivery_fee'
         | 'profit'
@@ -505,7 +501,7 @@ export class MarketingSummaryService {
       revenue_estimate: revenueEstimate,
       revenue_tax: sumKey('revenue_tax'),
       total_cost: sumKey('total_cost'),
-      total_cost_include_tax: sumKey('total_cost_include_tax'),
+      total_cost_est: sumKey('total_cost_est'),
       risk_fee: sumKey('risk_fee'),
       total_delivery_fee: sumKey('total_delivery_fee'),
       profit,
