@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Alert,
@@ -101,11 +102,32 @@ interface MarketingSummaryResponse {
   totals: MarketingSummaryTotals;
 }
 
+interface MarketingSummaryAllUser {
+  marketing_user_id: number;
+  marketing_user_display_name: string;
+  ads_account_ids: string[];
+  total_orders: number;
+  unmatched: MarketingSummaryUnmatched;
+  totals: MarketingSummaryTotals;
+}
+
+interface MarketingSummaryAllResponse {
+  start_date: string;
+  end_date: string;
+  users: MarketingSummaryAllUser[];
+}
+
+/** Select value that loads combined totals for every marketing user. */
+const ALL_MARKETING_USERS = 'all';
+
 const fmtNum = (n: number): string =>
   Number(n || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 });
 
 const fmtPct = (n: number | null): string =>
   n == null ? '—' : `${n.toFixed(2)}%`;
+
+const safeDiv = (a: number, b: number): number | null =>
+  b === 0 ? null : a / b;
 
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
@@ -245,21 +267,114 @@ const profitColor = (n: number): string => {
   return 'text.primary';
 };
 
+const unmatchedAdsColor = (spend: number): string =>
+  spend > 0 ? 'error.main' : 'success.main';
+
+const UNMATCHED_HIGHLIGHT_METRICS = new Set(['ads_spend', 'tax_ads']);
+
+function unmatchedBucketCellSx(
+  metricKey: string,
+  value: number | null,
+): React.ComponentProps<typeof TableCell>['sx'] {
+  if (
+    UNMATCHED_HIGHLIGHT_METRICS.has(metricKey) &&
+    value != null &&
+    value > 0
+  ) {
+    return {
+      fontWeight: 700,
+      color: 'error.main',
+      bgcolor: 'rgba(244, 67, 54, 0.14)',
+    };
+  }
+  return { bgcolor: 'warning.50' };
+}
+
+function profitVsAdsSx(
+  profit: number,
+  adsSpend: number,
+): React.ComponentProps<typeof TableCell>['sx'] {
+  const isBad = profit <= adsSpend;
+  return {
+    fontWeight: 700,
+    color: isBad ? 'error.main' : 'success.main',
+  };
+}
+
+function profitAfterAdsSx(
+  value: number | null,
+): React.ComponentProps<typeof TableCell>['sx'] {
+  if (value == null) return { fontWeight: 700 };
+  const isBad = value <= 0;
+  return {
+    fontWeight: 700,
+    color: isBad ? '#b71c1c' : '#1b5e20',
+    bgcolor: isBad
+      ? 'rgba(244, 67, 54, 0.14)'
+      : 'rgba(76, 175, 80, 0.18)',
+  };
+}
+
 /**
- * Themed colour for the `% Profit / Revenue` value of a single product row,
- * based on the configured profit-segment thresholds. Falls back to the
- * positive/negative `profitColor` when no segment matches (e.g. settings not
- * loaded, or selling price outside every configured window).
+ * Themed colour for the ROS (%) value of a single product row, based on the
+ * configured profit-segment thresholds. Falls back to the positive/negative
+ * `profitColor` when no segment matches (e.g. settings not loaded, or selling
+ * price outside every configured window).
  */
 function bandForRow(
   segments: ProfitSegment[],
   sellingPrice: number,
-  profitPct: number | null,
+  rosPct: number | null,
 ): ProfitBand | null {
   if (segments.length === 0) return null;
   const segment = findSegmentForPrice(segments, sellingPrice);
   if (!segment) return null;
-  return classifyProfitPct(segment, profitPct);
+  return classifyProfitPct(segment, rosPct);
+}
+
+/** Quantity-weighted average selling price across product rows. */
+function weightedAvgSellingPrice(
+  rows: MarketingSummaryRow[],
+): number | null {
+  let weightedSum = 0;
+  let totalQty = 0;
+  for (const row of rows) {
+    const qty = row.total_quantity;
+    if (qty > 0) {
+      weightedSum += row.selling_price * qty;
+      totalQty += qty;
+    }
+  }
+  return totalQty > 0 ? weightedSum / totalQty : null;
+}
+
+/** Profit-segment band for the combined TOTAL column. */
+function bandForTotals(
+  segments: ProfitSegment[],
+  rows: MarketingSummaryRow[],
+  totals: MarketingSummaryTotals,
+): ProfitBand | null {
+  const avgPrice = weightedAvgSellingPrice(rows);
+  if (avgPrice == null) return null;
+  return bandForRow(segments, avgPrice, totalRos(totals));
+}
+
+function emphasizeMetricSx(
+  band: ProfitBand | null,
+  fallbackProfit: number,
+): React.ComponentProps<typeof TableCell>['sx'] {
+  if (band) {
+    const theme = BAND_THEME[band];
+    return {
+      fontWeight: 700,
+      color: theme.fg,
+      bgcolor: theme.bg,
+    };
+  }
+  return {
+    fontWeight: 700,
+    color: profitColor(fallbackProfit),
+  };
 }
 
 /**
@@ -269,7 +384,7 @@ function bandForRow(
  *   the Unmatched ads bucket (use `null` to render an em-dash), and
  *   `total(t)` the value of the combined TOTAL column.
  */
-type MetricFormat = 'number' | 'percent';
+type MetricFormat = 'number' | 'percent' | 'ratio';
 
 interface MetricDef {
   key: string;
@@ -326,167 +441,319 @@ const FormulaTooltip: React.FC<{
   </Box>
 );
 
-const METRICS: MetricDef[] = [
-  {
-    key: 'selling_price',
-    label: 'Giá bán (1sp)',
-    format: 'number',
-    tooltip: 'Giá bán cho một đơn vị sản phẩm.',
-    value: (r) => r.selling_price,
-    unmatched: () => null,
-    total: () => null,
-  },
-  {
-    key: 'revenue',
-    label: 'Doanh thu',
-    format: 'number',
-    value: (r) => r.revenue,
-    unmatched: () => null,
-    total: (t) => t.revenue,
-  },
-  {
-    key: 'revenue_estimate',
-    label: 'Doanh thu ước tính (×0.8)',
-    tooltip:
-      'Doanh thu × 0,8. Chỉ là ước tính vì đơn hàng có thể được hoàn/trả.',
-    format: 'number',
-    value: (r) => r.revenue_estimate,
-    unmatched: () => null,
-    total: (t) => t.revenue_estimate,
-  },
-  {
-    key: 'revenue_tax',
-    label: 'Thuế doanh thu (VAT)',
-    format: 'number',
-    tooltip: 'Doanh thu ước tính × % VAT của sản phẩm (theo từng dòng).',
-    value: (r) => r.revenue_tax,
-    unmatched: () => null,
-    total: (t) => t.revenue_tax,
-    cellAnnotation: (r) =>
-      r.tax_value_pct > 0 ? `${r.tax_value_pct}%` : null,
-  },
-  {
-    key: 'cost_price',
-    label: 'Giá vốn (1 sp)',
-    format: 'number',
-    tooltip:
-      'Giá vốn cho một sản phẩm (Giá có thể thay đổi theo tháng).',
-    value: (r) => r.cost_price,
-    unmatched: () => null,
-    total: () => null,
-  },
-  {
-    key: 'total_cost',
-    label: 'Tổng giá vốn',
-    format: 'number',
-    value: (r) => r.total_cost,
-    unmatched: () => null,
-    total: (t) => t.total_cost,
-  },
-  {
-    key: 'total_cost_est',
-    label: 'Tổng giá vốn ước tính (×0.8)',
-    format: 'number',
-    tooltip:
-      'Tổng giá vốn × 0,8. Chỉ là ước tính vì đơn hàng có thể được hoàn/trả.',
-    value: (r) => r.total_cost_est,
-    unmatched: () => null,
-    total: (t) => t.total_cost_est,
-  },
-  {
-    key: 'risk_fee',
-    label: 'Phí rủi ro (10% tổng giá vốn ước tính)',
-    format: 'number',
-    value: (r) => r.risk_fee,
-    unmatched: () => null,
-    total: (t) => t.risk_fee,
-  },
-  {
-    key: 'delivery_fee_per_unit',
-    label: 'Phí vận chuyển (1 sp)',
-    format: 'number',
-    tooltip: 'Phí vận chuyển tính trên mỗi đơn vị sản phẩm.',
-    value: (r) => r.delivery_fee_per_unit,
-    unmatched: () => null,
-    total: () => null,
-  },
-  {
-    key: 'total_delivery_fee',
-    label: 'Tổng phí vận chuyển',
-    format: 'number',
-    value: (r) => r.total_delivery_fee,
-    unmatched: () => null,
-    total: (t) => t.total_delivery_fee,
-  },
-  {
-    key: 'ads_spend',
-    label: 'Quảng cáo',
-    format: 'number',
-    value: (r) => r.ads_spend,
-    unmatched: (u) => u.ads_spend,
-    total: (t) => t.ads_spend,
-  },
-  {
-    key: 'tax_ads',
-    label: 'Thuế quảng cáo (10%)',
-    format: 'number',
-    value: (r) => r.tax_ads,
-    unmatched: (u) => u.tax_ads,
-    total: (t) => t.tax_ads,
-  },
-  {
-    key: 'ads_per_revenue_pct',
-    label: '% Quảng cáo / Doanh thu ước tính',
-    format: 'percent',
-    value: (r) => r.ads_per_revenue_pct,
-    unmatched: () => null,
-    total: (t) => t.ads_per_revenue_pct,
-  },
-  {
-    key: 'profit',
-    label: 'Lợi nhuận',
-    format: 'number',
-    emphasize: true,
-    tooltip: (
-      <FormulaTooltip
-        result="Lợi nhuận"
-        operands={[
-          { sign: '=', label: 'Doanh thu ước tính' },
-          { sign: '−', label: 'Thuế doanh thu (VAT)' },
-          { sign: '−', label: 'Tổng giá vốn ước tính' },
-          { sign: '−', label: 'Phí rủi ro' },
-          { sign: '−', label: 'Tổng phí vận chuyển' },
-          { sign: '−', label: 'Thuế quảng cáo (10%)' },
-        ]}
-        note="Quảng cáo không khớp không bị trừ vào lợi nhuận."
-      />
-    ),
-    value: (r) => r.profit,
-    unmatched: () => null,
-    total: (t) => t.profit,
-  },
-  {
-    key: 'profit_per_revenue_pct',
-    label: '% Lợi nhuận / Doanh thu ước tính',
-    format: 'percent',
-    emphasize: true,
-    value: (r) => r.profit_per_revenue_pct,
-    unmatched: () => null,
-    total: (t) => t.profit_per_revenue_pct,
-  },
-];
+const rowPoas = (r: MarketingSummaryRow): number | null =>
+  safeDiv(r.profit, r.ads_spend + r.tax_ads);
+
+const rowProfitAfterAds = (r: MarketingSummaryRow): number =>
+  r.profit - r.ads_spend;
+
+const rowRos = (r: MarketingSummaryRow): number | null => {
+  const afterAds = rowProfitAfterAds(r);
+  const pct = safeDiv(afterAds, r.revenue_estimate);
+  return pct == null ? null : pct * 100;
+};
+
+const totalPoas = (t: MarketingSummaryTotals): number | null =>
+  safeDiv(t.profit, t.ads_spend + t.tax_ads);
+
+const totalProfitAfterAds = (t: MarketingSummaryTotals): number =>
+  t.profit - t.ads_spend;
+
+const totalRos = (t: MarketingSummaryTotals): number | null => {
+  const afterAds = totalProfitAfterAds(t);
+  const pct = safeDiv(afterAds, t.revenue_estimate);
+  return pct == null ? null : pct * 100;
+};
+
+/** Sum per-user totals into one combined column for the all-marketing view. */
+const aggregateAllUserTotals = (
+  users: MarketingSummaryAllUser[],
+): MarketingSummaryTotals => {
+  const base = users.reduce<MarketingSummaryTotals>(
+    (acc, { totals: t }) => ({
+      total_quantity: acc.total_quantity + t.total_quantity,
+      ads_spend: acc.ads_spend + t.ads_spend,
+      tax_ads: acc.tax_ads + t.tax_ads,
+      revenue: acc.revenue + t.revenue,
+      revenue_estimate: acc.revenue_estimate + t.revenue_estimate,
+      revenue_tax: acc.revenue_tax + t.revenue_tax,
+      total_cost: acc.total_cost + t.total_cost,
+      total_cost_est: acc.total_cost_est + t.total_cost_est,
+      risk_fee: acc.risk_fee + t.risk_fee,
+      total_delivery_fee: acc.total_delivery_fee + t.total_delivery_fee,
+      profit: acc.profit + t.profit,
+      ads_per_revenue_pct: null,
+      profit_per_revenue_pct: null,
+    }),
+    {
+      total_quantity: 0,
+      ads_spend: 0,
+      tax_ads: 0,
+      revenue: 0,
+      revenue_estimate: 0,
+      revenue_tax: 0,
+      total_cost: 0,
+      total_cost_est: 0,
+      risk_fee: 0,
+      total_delivery_fee: 0,
+      profit: 0,
+      ads_per_revenue_pct: null,
+      profit_per_revenue_pct: null,
+    },
+  );
+  const adsPerRev = safeDiv(base.ads_spend, base.revenue);
+  return {
+    ...base,
+    ads_per_revenue_pct: adsPerRev == null ? null : adsPerRev * 100,
+    profit_per_revenue_pct: totalRos(base),
+  };
+};
+
+const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
+  const metrics: MetricDef[] = [
+    {
+      key: 'ads_spend',
+      label: 'ADS',
+      format: 'number',
+      emphasize: true,
+      tooltip: 'Chi phí chạy ads facebook',
+      value: (r) => r.ads_spend,
+      unmatched: (u) => u.ads_spend,
+      total: (t) => t.ads_spend,
+    },
+    {
+      key: 'tax_ads',
+      label: 'Thuế TK 10%',
+      format: 'number',
+      value: (r) => r.tax_ads,
+      unmatched: (u) => u.tax_ads,
+      total: (t) => t.tax_ads,
+    },
+    {
+      key: 'data',
+      label: 'Data',
+      format: 'number',
+      tooltip: 'Số lượng (SL) của sản phẩm.',
+      value: (r) => r.total_quantity,
+      unmatched: () => null,
+      total: (t) => t.total_quantity,
+    },
+    {
+      key: 'confirmed_orders',
+      label: 'Chốt Đơn',
+      format: 'number',
+      tooltip: 'Bằng số lượng (SL) của sản phẩm.',
+      value: (r) => r.total_quantity,
+      unmatched: () => null,
+      total: (t) => t.total_quantity,
+    },
+    {
+      key: 'ads_per_data',
+      label: 'Ads/Data',
+      format: 'number',
+      value: (r) => safeDiv(r.ads_spend, r.total_quantity),
+      unmatched: () => null,
+      total: (t) => safeDiv(t.ads_spend, t.total_quantity),
+    },
+    {
+      key: 'ads_per_order',
+      label: 'Ads/Đơn',
+      format: 'number',
+      value: (r) => safeDiv(r.ads_spend, r.total_quantity),
+      unmatched: () => null,
+      total: (t) => safeDiv(t.ads_spend, t.total_quantity),
+    },
+    {
+      key: 'revenue_estimate',
+      label: 'Doanh số',
+      tooltip:
+        'Doanh thu × 0,8. Chỉ là ước tính vì đơn hàng có thể được hoàn/trả.',
+      format: 'number',
+      emphasize: true,
+      value: (r) => r.revenue_estimate,
+      unmatched: () => null,
+      total: (t) => t.revenue_estimate,
+    },
+    {
+      key: 'revenue_tax',
+      label: 'Thuế Doanh số',
+      format: 'number',
+      tooltip: 'Doanh số × % VAT của sản phẩm (theo từng dòng).',
+      value: (r) => r.revenue_tax,
+      unmatched: () => null,
+      total: (t) => t.revenue_tax,
+      cellAnnotation: (r) =>
+        r.tax_value_pct > 0 ? `${r.tax_value_pct}%` : null,
+    },
+  ];
+
+  if (showFullInfo) {
+    metrics.push(
+      {
+        key: 'selling_price',
+        label: 'Giá bán (1sp)',
+        format: 'number',
+        tooltip: 'Giá bán cho một đơn vị sản phẩm.',
+        value: (r) => r.selling_price,
+        unmatched: () => null,
+        total: () => null,
+      },
+      {
+        key: 'revenue',
+        label: 'Doanh thu',
+        format: 'number',
+        value: (r) => r.revenue,
+        unmatched: () => null,
+        total: (t) => t.revenue,
+      },
+      {
+        key: 'cost_price',
+        label: 'Giá vốn (1 sp)',
+        format: 'number',
+        tooltip:
+          'Giá vốn cho một sản phẩm (Giá có thể thay đổi theo tháng).',
+        value: (r) => r.cost_price,
+        unmatched: () => null,
+        total: () => null,
+      },
+      {
+        key: 'total_cost',
+        label: 'Tổng giá vốn',
+        format: 'number',
+        value: (r) => r.total_cost,
+        unmatched: () => null,
+        total: (t) => t.total_cost,
+      },
+    );
+  }
+
+  metrics.push(
+    {
+      key: 'total_cost_est',
+      label: 'CP Nhập hàng',
+      format: 'number',
+      tooltip:
+        'Tổng giá vốn × 0,8. Chỉ là ước tính vì đơn hàng có thể được hoàn/trả.',
+      value: (r) => r.total_cost_est,
+      unmatched: () => null,
+      total: (t) => t.total_cost_est,
+    },
+    {
+      key: 'risk_fee',
+      label: 'CP Rủi ro',
+      format: 'number',
+      value: (r) => r.risk_fee,
+      unmatched: () => null,
+      total: (t) => t.risk_fee,
+    },
+  );
+
+  if (showFullInfo) {
+    metrics.push({
+      key: 'delivery_fee_per_unit',
+      label: 'Phí vận chuyển (1 sp)',
+      format: 'number',
+      tooltip: 'Phí vận chuyển tính trên mỗi đơn vị sản phẩm.',
+      value: (r) => r.delivery_fee_per_unit,
+      unmatched: () => null,
+      total: () => null,
+    });
+  }
+
+  metrics.push(
+    {
+      key: 'total_delivery_fee',
+      label: 'CP Vận chuyển',
+      format: 'number',
+      value: (r) => r.total_delivery_fee,
+      unmatched: () => null,
+      total: (t) => t.total_delivery_fee,
+    },
+    {
+      key: 'profit',
+      label: 'Tổng lợi nhuận gộp',
+      format: 'number',
+      emphasize: true,
+      tooltip: (
+        <FormulaTooltip
+          result="Tổng lợi nhuận gộp"
+          operands={[
+            { sign: '=', label: 'Doanh số' },
+            { sign: '−', label: 'Thuế Doanh số' },
+            { sign: '−', label: 'CP Nhập hàng' },
+            { sign: '−', label: 'CP Rủi ro' },
+            { sign: '−', label: 'CP Vận chuyển' },
+            { sign: '−', label: 'Thuế TK 10%' },
+          ]}
+          note="ADS không khớp không bị trừ vào lợi nhuận."
+        />
+      ),
+      value: (r) => r.profit,
+      unmatched: () => null,
+      total: (t) => t.profit,
+    },
+    {
+      key: 'poas',
+      label: 'Chỉ số POAS',
+      format: 'ratio',
+      tooltip: 'Tổng lợi nhuận gộp ÷ (ADS + Thuế TK 10%).',
+      value: rowPoas,
+      unmatched: () => null,
+      total: totalPoas,
+    },
+    {
+      key: 'profit_after_ads',
+      label: 'Lợi nhuận sau Ads',
+      format: 'number',
+      emphasize: true,
+      tooltip: 'Tổng lợi nhuận gộp − ADS.',
+      value: rowProfitAfterAds,
+      unmatched: () => null,
+      total: totalProfitAfterAds,
+    },
+    {
+      key: 'ros',
+      label: 'ROS (%)',
+      format: 'percent',
+      emphasize: true,
+      tooltip: '(Lợi nhuận sau Ads ÷ Doanh số) × 100.',
+      value: rowRos,
+      unmatched: () => null,
+      total: totalRos,
+    },
+  );
+
+  return metrics;
+};
+
+const fmtRatio = (n: number | null): string =>
+  n == null
+    ? '—'
+    : n.toLocaleString('vi-VN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
 
 const renderValue = (
   v: number | null,
   format: MetricFormat,
 ): string => {
   if (v == null) return '—';
-  return format === 'percent' ? fmtPct(v) : fmtNum(v);
+  if (format === 'percent') return fmtPct(v);
+  if (format === 'ratio') return fmtRatio(v);
+  return fmtNum(v);
 };
 
 const STICKY_COL_WIDTH = 220;
 
 const MarketingSummaryPage: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const showFullInfo = searchParams.get('show_full_info') === '1';
+  const metrics = useMemo(
+    () => buildMetrics(showFullInfo),
+    [showFullInfo],
+  );
+
   /**
    * Marketing users can only summarise their own data. We fix the
    * `marketing_user_id` filter to the logged-in user's id and hide the
@@ -556,7 +823,11 @@ const MarketingSummaryPage: React.FC = () => {
 
   const segmentList = useMemo(() => segments ?? [], [segments]);
 
-  const summaryQuery = useQuery<MarketingSummaryResponse>({
+  const isAllUsersView = submitted?.marketingUserId === ALL_MARKETING_USERS;
+
+  const summaryQuery = useQuery<
+    MarketingSummaryResponse | MarketingSummaryAllResponse
+  >({
     queryKey: [
       'marketing-summary',
       submitted?.marketingUserId,
@@ -579,6 +850,20 @@ const MarketingSummaryPage: React.FC = () => {
   });
 
   const { data, isFetching, error } = summaryQuery;
+  const singleData =
+    data && !isAllUsersView ? (data as MarketingSummaryResponse) : null;
+  const allData =
+    data && isAllUsersView ? (data as MarketingSummaryAllResponse) : null;
+
+  const singleTotalBand = useMemo(() => {
+    if (!singleData || segmentList.length === 0) return null;
+    return bandForTotals(segmentList, singleData.rows, singleData.totals);
+  }, [singleData, segmentList]);
+
+  const allUsersGrandTotals = useMemo(() => {
+    if (!allData || allData.users.length === 0) return null;
+    return aggregateAllUserTotals(allData.users);
+  }, [allData]);
 
   const handleSummarize = () => {
     if (!marketingUserInput) return;
@@ -601,11 +886,12 @@ const MarketingSummaryPage: React.FC = () => {
   };
 
   const dateRangeLabel = useMemo(() => {
-    if (!data) return null;
-    return data.start_date === data.end_date
-      ? data.start_date
-      : `${data.start_date} → ${data.end_date}`;
-  }, [data]);
+    const range = singleData ?? allData;
+    if (!range) return null;
+    return range.start_date === range.end_date
+      ? range.start_date
+      : `${range.start_date} → ${range.end_date}`;
+  }, [singleData, allData]);
 
   const canSubmit =
     marketingUserInput !== '' &&
@@ -646,6 +932,9 @@ const MarketingSummaryPage: React.FC = () => {
             >
               <MenuItem value="">
                 <em>Select a marketing user</em>
+              </MenuItem>
+              <MenuItem value={ALL_MARKETING_USERS}>
+                Tất cả marketing
               </MenuItem>
               {(filterUsers?.marketing ?? []).map((u) => (
                 <MenuItem key={u.id} value={String(u.id)}>
@@ -796,7 +1085,8 @@ const MarketingSummaryPage: React.FC = () => {
             ) : (
               <>
                 <Box component="li" sx={{ mb: 0.75 }}>
-                  Chọn người dùng marketing và chọn ngày muốn xem, xong nhấn{' '}
+                  Chọn người dùng marketing (hoặc <strong>Tất cả marketing</strong>{' '}
+                  để xem tổng hợp từng người) và chọn ngày muốn xem, xong nhấn{' '}
                   <strong>Xem báo cáo</strong>.
                 </Box>
                 <Box component="li">
@@ -816,7 +1106,327 @@ const MarketingSummaryPage: React.FC = () => {
         </Box>
       )}
 
-      {data && (
+      {allData && (
+        <>
+          <Box
+            sx={{
+              mb: 1.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                  fontWeight: 700,
+                  letterSpacing: 0.4,
+                }}
+              >
+                MARKETING USER
+              </Typography>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                Tất cả marketing
+              </Typography>
+            </Box>
+
+            {segmentList.length > 0 && (
+              <Box
+                sx={{
+                  display: 'flex',
+                  gap: 0.75,
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: 'text.secondary',
+                    fontWeight: 700,
+                    letterSpacing: 0.4,
+                  }}
+                >
+                  ROS %
+                </Typography>
+                {(
+                  ['danger', 'warning', 'good', 'excellent'] as ProfitBand[]
+                ).map((band) => {
+                  const theme = BAND_THEME[band];
+                  return (
+                    <Chip
+                      key={band}
+                      size="small"
+                      label={`${theme.emoji} ${theme.label}`}
+                      sx={{
+                        bgcolor: theme.bg,
+                        color: theme.fg,
+                        fontWeight: 600,
+                      }}
+                    />
+                  );
+                })}
+              </Box>
+            )}
+          </Box>
+
+          <TableContainer component={Paper} sx={{ mb: 3, overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 700 }}>Marketing user</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Kỳ</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    Đơn đã xác nhận
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Tài khoản quảng cáo</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    Quảng cáo không khớp
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    Tổng lợi nhuận gộp
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    ROS (%)
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {allData.users.map((user) => (
+                  <TableRow key={user.marketing_user_id} hover>
+                    <TableCell sx={{ fontWeight: 700 }}>
+                      {user.marketing_user_display_name}
+                    </TableCell>
+                    <TableCell>{dateRangeLabel ?? '—'}</TableCell>
+                    <TableCell align="right">
+                      {fmtNum(user.total_orders)}
+                    </TableCell>
+                    <TableCell sx={{ wordBreak: 'break-all', maxWidth: 360 }}>
+                      {user.ads_account_ids.length === 0 ? (
+                        <Chip size="small" color="warning" label="None" />
+                      ) : (
+                        user.ads_account_ids.join(', ')
+                      )}
+                    </TableCell>
+                    <TableCell align="right">
+                      <Tooltip title="Tổng chi phí quảng cáo có tên chiến dịch không khớp sản phẩm nào. Không bị trừ vào lợi nhuận.">
+                        <Typography
+                          component="span"
+                          sx={{
+                            fontWeight: 700,
+                            color: unmatchedAdsColor(user.unmatched.ads_spend),
+                          }}
+                        >
+                          {fmtNum(user.unmatched.ads_spend)}
+                        </Typography>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell
+                      align="right"
+                      sx={profitVsAdsSx(
+                        user.totals.profit,
+                        user.totals.ads_spend,
+                      )}
+                    >
+                      {fmtNum(user.totals.profit)}
+                    </TableCell>
+                    <TableCell
+                      align="right"
+                      sx={{
+                        fontWeight: 700,
+                        color: profitColor(user.totals.profit),
+                      }}
+                    >
+                      {fmtPct(totalRos(user.totals))}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
+            <Table size="small" sx={{ minWidth: 720 }}>
+              <TableHead>
+                <TableRow>
+                  <StickyHeadCell>Chỉ số</StickyHeadCell>
+                  {allData.users.map((user) => (
+                    <TableCell
+                      key={user.marketing_user_id}
+                      align="right"
+                      sx={{
+                        fontWeight: 700,
+                        verticalAlign: 'top',
+                        minWidth: 140,
+                        bgcolor: 'action.selected',
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontWeight: 700, lineHeight: 1.2 }}
+                          noWrap
+                          title={user.marketing_user_display_name}
+                        >
+                          {user.marketing_user_display_name}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{ color: 'text.secondary', fontWeight: 500 }}
+                        >
+                          TỔNG CỘNG
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{ color: 'text.secondary' }}
+                        >
+                          SL:{' '}
+                          <strong>
+                            {fmtNum(user.totals.total_quantity)}
+                          </strong>
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                  ))}
+                  {allUsersGrandTotals && (
+                    <TableCell
+                      align="right"
+                      sx={{
+                        fontWeight: 700,
+                        verticalAlign: 'top',
+                        minWidth: 140,
+                        bgcolor: 'action.selected',
+                        borderLeft: 2,
+                        borderColor: 'divider',
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontWeight: 700, lineHeight: 1.2 }}
+                        >
+                          TỔNG CỘNG
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{ color: 'text.secondary', fontWeight: 500 }}
+                        >
+                          tất cả marketing
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{ color: 'text.secondary' }}
+                        >
+                          SL:{' '}
+                          <strong>
+                            {fmtNum(allUsersGrandTotals.total_quantity)}
+                          </strong>
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                  )}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {allData.users.length === 0 && (
+                  <TableRow>
+                    <StickyBodyCell>—</StickyBodyCell>
+                    <TableCell
+                      align="center"
+                      sx={{ color: 'text.secondary' }}
+                    >
+                      No marketing users found.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {metrics.map((metric) => {
+                  const grandTotalValue = allUsersGrandTotals
+                    ? metric.total(allUsersGrandTotals)
+                    : null;
+                  return (
+                    <TableRow key={metric.key} hover>
+                      <StickyBodyCell
+                        sx={{
+                          fontWeight: metric.emphasize ? 700 : 500,
+                        }}
+                      >
+                        {metric.tooltip ? (
+                          <Tooltip title={metric.tooltip}>
+                            <span>{metric.label}</span>
+                          </Tooltip>
+                        ) : (
+                          metric.label
+                        )}
+                      </StickyBodyCell>
+                      {allData.users.map((user) => {
+                        const v = metric.total(user.totals);
+                        return (
+                          <TableCell
+                            key={user.marketing_user_id}
+                            align="right"
+                            sx={{
+                              bgcolor: 'action.selected',
+                              fontWeight: metric.emphasize ? 700 : undefined,
+                              ...(metric.key === 'profit'
+                                ? profitVsAdsSx(
+                                    user.totals.profit,
+                                    user.totals.ads_spend,
+                                  )
+                                : metric.key === 'profit_after_ads'
+                                  ? profitAfterAdsSx(
+                                      totalProfitAfterAds(user.totals),
+                                    )
+                                  : metric.emphasize && metric.key === 'ros'
+                                    ? {
+                                        color: profitColor(user.totals.profit),
+                                      }
+                                    : {}),
+                            }}
+                          >
+                            {renderValue(v, metric.format)}
+                          </TableCell>
+                        );
+                      })}
+                      {allUsersGrandTotals && (
+                        <TableCell
+                          align="right"
+                          sx={{
+                            bgcolor: 'action.selected',
+                            borderLeft: 2,
+                            borderColor: 'divider',
+                            fontWeight: metric.emphasize ? 700 : undefined,
+                            ...(metric.key === 'profit'
+                              ? profitVsAdsSx(
+                                  allUsersGrandTotals.profit,
+                                  allUsersGrandTotals.ads_spend,
+                                )
+                              : metric.key === 'profit_after_ads'
+                                ? profitAfterAdsSx(grandTotalValue)
+                                : metric.emphasize && metric.key === 'ros'
+                                  ? {
+                                      color: profitColor(
+                                        allUsersGrandTotals.profit,
+                                      ),
+                                    }
+                                  : {}),
+                          }}
+                        >
+                          {renderValue(grandTotalValue, metric.format)}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </>
+      )}
+
+      {singleData && (
         <>
           <Box
             sx={{
@@ -841,7 +1451,7 @@ const MarketingSummaryPage: React.FC = () => {
                 MARKETING USER
               </Typography>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                {data.marketing_user_display_name}
+                {singleData.marketing_user_display_name}
               </Typography>
             </Box>
 
@@ -862,7 +1472,7 @@ const MarketingSummaryPage: React.FC = () => {
                     letterSpacing: 0.4,
                   }}
                 >
-                  % PROFIT/REVENUE
+                  ROS %
                 </Typography>
                 {(
                   ['danger', 'warning', 'good', 'excellent'] as ProfitBand[]
@@ -898,10 +1508,10 @@ const MarketingSummaryPage: React.FC = () => {
                     Quảng cáo không khớp
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Lợi nhuận
+                    Tổng lợi nhuận gộp
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    % Lợi nhuận/Doanh thu
+                    ROS (%)
                   </TableCell>
                 </TableRow>
               </TableHead>
@@ -909,42 +1519,47 @@ const MarketingSummaryPage: React.FC = () => {
                 <TableRow>
                   <TableCell>{dateRangeLabel ?? '—'}</TableCell>
                   <TableCell align="right">
-                    {fmtNum(data.total_orders)}
+                    {fmtNum(singleData.total_orders)}
                   </TableCell>
                   <TableCell sx={{ wordBreak: 'break-all', maxWidth: 360 }}>
-                    {data.ads_account_ids.length === 0 ? (
+                    {singleData.ads_account_ids.length === 0 ? (
                       <Chip size="small" color="warning" label="None" />
                     ) : (
-                      data.ads_account_ids.join(', ')
+                      singleData.ads_account_ids.join(', ')
                     )}
                   </TableCell>
                   <TableCell align="right">
                     <Tooltip title="Tổng chi phí quảng cáo có tên chiến dịch không khớp sản phẩm nào. Không bị trừ vào lợi nhuận.">
-                      <Typography
-                        component="span"
-                        sx={{ fontWeight: 700, color: 'warning.dark' }}
-                      >
-                        {fmtNum(data.unmatched.ads_spend)}
-                      </Typography>
+                        <Typography
+                          component="span"
+                          sx={{
+                            fontWeight: 700,
+                            color: unmatchedAdsColor(
+                              singleData.unmatched.ads_spend,
+                            ),
+                          }}
+                        >
+                          {fmtNum(singleData.unmatched.ads_spend)}
+                        </Typography>
                     </Tooltip>
                   </TableCell>
                   <TableCell
                     align="right"
-                    sx={{
-                      fontWeight: 700,
-                      color: profitColor(data.totals.profit),
-                    }}
+                    sx={profitVsAdsSx(
+                      singleData.totals.profit,
+                      singleData.totals.ads_spend,
+                    )}
                   >
-                    {fmtNum(data.totals.profit)}
+                    {fmtNum(singleData.totals.profit)}
                   </TableCell>
                   <TableCell
                     align="right"
-                    sx={{
-                      fontWeight: 700,
-                      color: profitColor(data.totals.profit),
-                    }}
+                    sx={emphasizeMetricSx(
+                      singleTotalBand,
+                      singleData.totals.profit,
+                    )}
                   >
-                    {fmtPct(data.totals.profit_per_revenue_pct)}
+                    {fmtPct(totalRos(singleData.totals))}
                   </TableCell>
                 </TableRow>
               </TableBody>
@@ -956,7 +1571,7 @@ const MarketingSummaryPage: React.FC = () => {
               <TableHead>
                 <TableRow>
                   <StickyHeadCell>Chỉ số</StickyHeadCell>
-                  {data.rows.map((row) => (
+                  {singleData.rows.map((row) => (
                     <TableCell
                       key={row.product_id}
                       align="right"
@@ -1050,14 +1665,17 @@ const MarketingSummaryPage: React.FC = () => {
                         sx={{ color: 'text.secondary' }}
                       >
                         SL:{' '}
-                        <strong>{fmtNum(data.totals.total_quantity)}</strong>
+                        <strong>
+                          {fmtNum(singleData.totals.total_quantity)}
+                        </strong>
                       </Typography>
                     </Box>
                   </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {data.rows.length === 0 && data.unmatched.ads_spend === 0 && (
+                {singleData.rows.length === 0 &&
+                  singleData.unmatched.ads_spend === 0 && (
                   <TableRow>
                     <StickyBodyCell>—</StickyBodyCell>
                     <TableCell
@@ -1069,8 +1687,8 @@ const MarketingSummaryPage: React.FC = () => {
                     </TableCell>
                   </TableRow>
                 )}
-                {METRICS.map((metric) => {
-                  const totalValue = metric.total(data.totals);
+                {metrics.map((metric) => {
+                  const totalValue = metric.total(singleData.totals);
                   return (
                     <TableRow key={metric.key} hover>
                       <StickyBodyCell
@@ -1086,18 +1704,23 @@ const MarketingSummaryPage: React.FC = () => {
                           metric.label
                         )}
                       </StickyBodyCell>
-                      {data.rows.map((row) => {
+                      {singleData.rows.map((row) => {
                         const v = metric.value(row);
                         const isProfit = metric.key === 'profit';
-                        const isProfitPct =
-                          metric.key === 'profit_per_revenue_pct';
+                        const isRos = metric.key === 'ros';
+                        const isProfitAfterAds =
+                          metric.key === 'profit_after_ads';
                         const band = bandForRow(
                           segmentList,
                           row.selling_price,
-                          row.profit_per_revenue_pct,
+                          rowRos(row),
                         );
                         let sx: React.ComponentProps<typeof TableCell>['sx'];
-                        if (metric.emphasize && (isProfit || isProfitPct)) {
+                        if (isProfit) {
+                          sx = profitVsAdsSx(row.profit, row.ads_spend);
+                        } else if (isProfitAfterAds) {
+                          sx = profitAfterAdsSx(v);
+                        } else if (metric.emphasize && isRos) {
                           if (band) {
                             const theme = BAND_THEME[band];
                             sx = {
@@ -1141,25 +1764,36 @@ const MarketingSummaryPage: React.FC = () => {
                       })}
                       <TableCell
                         align="right"
-                        sx={{ bgcolor: 'warning.50' }}
+                        sx={unmatchedBucketCellSx(
+                          metric.key,
+                          metric.unmatched(singleData.unmatched),
+                        )}
                       >
                         {renderValue(
-                          metric.unmatched(data.unmatched),
+                          metric.unmatched(singleData.unmatched),
                           metric.format,
                         )}
                       </TableCell>
                       <TableCell
                         align="right"
-                        sx={{
-                          bgcolor: 'action.selected',
-                          fontWeight: 700,
-                          color:
-                            metric.emphasize &&
-                            (metric.key === 'profit' ||
-                              metric.key === 'profit_per_revenue_pct')
-                              ? profitColor(data.totals.profit)
-                              : undefined,
-                        }}
+                        sx={
+                          metric.key === 'profit'
+                            ? profitVsAdsSx(
+                                singleData.totals.profit,
+                                singleData.totals.ads_spend,
+                              )
+                            : metric.key === 'profit_after_ads'
+                              ? profitAfterAdsSx(totalValue)
+                              : metric.emphasize && metric.key === 'ros'
+                                ? emphasizeMetricSx(
+                                    singleTotalBand,
+                                    singleData.totals.profit,
+                                  )
+                                : {
+                                    bgcolor: 'action.selected',
+                                    fontWeight: 700,
+                                  }
+                        }
                       >
                         {renderValue(totalValue, metric.format)}
                       </TableCell>

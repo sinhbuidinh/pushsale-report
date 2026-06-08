@@ -9,7 +9,7 @@ import {
  *
  * Each segment defines an inclusive `min_price_vnd` and exclusive `max_price_vnd`
  * window (VND, applied against the product selling price) and three threshold
- * percentages applied to `% Profit / Revenue`:
+ * percentages applied to ROS (%):
  *   - `< danger_max_pct`              → 🔴 Danger
  *   - `[danger_max_pct, warning_max_pct)` → 🟡 Warning
  *   - `[warning_max_pct, good_max_pct)`   → 🔵 Good
