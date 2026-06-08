@@ -45,13 +45,13 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   };
 
   const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: `/${PANEL_PREFIX}/dashboard`, roles: ['admin', 'sale'] },
-    { text: 'Users', icon: <PeopleIcon />, path: `/${PANEL_PREFIX}/users`, roles: ['admin', 'marketing', 'sale'] },
-    { text: 'Products', icon: <InventoryIcon />, path: `/${PANEL_PREFIX}/products`, roles: ['admin'] },
-    { text: 'Orders', icon: <OrdersIcon />, path: `/${PANEL_PREFIX}/orders`, roles: ['admin'] },
-    { text: 'Facebook Ads', icon: <CampaignIcon />, path: `/${PANEL_PREFIX}/facebook-ads`, roles: ['admin'] },
-    { text: 'Marketing Summary', icon: <InsightsIcon />, path: `/${PANEL_PREFIX}/marketing-summary`, roles: ['admin', 'marketing'] },
-    { text: 'Profit Segments', icon: <TuneIcon />, path: `/${PANEL_PREFIX}/profit-segments`, roles: ['admin'] },
+    { id: 'marketing-summary', text: 'Báo cáo bán hàng', icon: <InsightsIcon />, path: `/${PANEL_PREFIX}/marketing-summary`, roles: ['admin', 'marketing'] },
+    { id: 'profit-segments', text: 'Chỉnh màu phân khúc lợi nhuận', icon: <TuneIcon />, path: `/${PANEL_PREFIX}/profit-segments`, roles: ['admin'] },
+    { id: 'dashboard', text: 'Lấy đơn từ PushSale', icon: <DashboardIcon />, path: `/${PANEL_PREFIX}/dashboard`, roles: ['admin', 'sale'] },
+    { id: 'facebook-ads', text: 'Lấy ads cost từ facebook', icon: <CampaignIcon />, path: `/${PANEL_PREFIX}/facebook-ads`, roles: ['admin'] },
+    { id: 'products', text: 'Sản phẩm', icon: <InventoryIcon />, path: `/${PANEL_PREFIX}/products`, roles: ['admin'] },
+    { id: 'orders', text: 'Đơn hàng', icon: <OrdersIcon />, path: `/${PANEL_PREFIX}/orders`, roles: ['admin'] },
+    { id: 'users', text: 'Người dùng', icon: <PeopleIcon />, path: `/${PANEL_PREFIX}/users`, roles: ['admin', 'marketing', 'sale'] },
   ];
 
   return (
@@ -86,7 +86,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                 location.pathname === item.path ||
                 location.pathname.startsWith(`${item.path}/`);
               return (
-                <ListItem key={item.text} disablePadding>
+                <ListItem key={item.id} disablePadding>
                   <ListItemButton
                     component={Link}
                     to={item.path}
