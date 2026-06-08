@@ -28,9 +28,10 @@ export class MarketingSummaryController {
    * single date (`start_date`) or a closed date range (`start_date` ..
    * `end_date`). When `end_date` is omitted it defaults to `start_date`.
    *
-   * Marketing users may only summarise their own data: the
-   * `marketing_user_id` query parameter is ignored for them and forced to the
-   * caller's own id.
+   * Only `admin` and `marketing` callers may use this endpoint.
+   * - `marketing`: always their own summary (`marketing_user_id` is ignored).
+   * - `admin` + `marketing_user_id=all`: combined totals for every marketer.
+   * - `admin` + positive `marketing_user_id`: that user's full summary.
    */
   @Get()
   async summarize(
@@ -41,17 +42,8 @@ export class MarketingSummaryController {
   ) {
     try {
       const caller = req.user as JwtRequestUser | undefined;
-
-      let marketing_user_id: number;
-      if (caller?.type === 'marketing') {
-        marketing_user_id = caller.sub;
-      } else {
-        marketing_user_id = parseInt(String(marketingUserIdStr).trim(), 10);
-        if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
-          throw new BadRequestException(
-            'marketing_user_id query parameter is required',
-          );
-        }
+      if (!caller || (caller.type !== 'admin' && caller.type !== 'marketing')) {
+        throw new BadRequestException('Access denied');
       }
 
       const start = String(startDate || '').trim();
@@ -61,6 +53,29 @@ export class MarketingSummaryController {
           'start_date query parameter is required (YYYY-MM-DD)',
         );
       }
+
+      if (caller.type === 'marketing') {
+        const data = await this.service.summarize({
+          marketing_user_id: caller.sub,
+          start_date: start,
+          end_date: end,
+        });
+        return { status: true, data };
+      }
+
+      const idParam = String(marketingUserIdStr).trim().toLowerCase();
+      if (idParam === 'all') {
+        const data = await this.service.summarizeAll(start, end);
+        return { status: true, data };
+      }
+
+      const marketing_user_id = parseInt(idParam, 10);
+      if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
+        throw new BadRequestException(
+          'marketing_user_id query parameter is required (positive integer or "all")',
+        );
+      }
+
       const data = await this.service.summarize({
         marketing_user_id,
         start_date: start,

@@ -101,6 +101,22 @@ export interface MarketingSummaryResponse {
   totals: MarketingSummaryTotals;
 }
 
+export interface MarketingSummaryAllUserEntry {
+  marketing_user_id: number;
+  marketing_user_display_name: string;
+  ads_account_ids: string[];
+  total_orders: number;
+  unmatched: MarketingSummaryUnmatched;
+  totals: MarketingSummaryTotals;
+}
+
+/** Per-user totals for every marketing user (no per-product breakdown). */
+export interface MarketingSummaryAllResponse {
+  start_date: string;
+  end_date: string;
+  users: MarketingSummaryAllUserEntry[];
+}
+
 @Injectable()
 export class MarketingSummaryService {
   constructor(
@@ -185,6 +201,48 @@ export class MarketingSummaryService {
     };
   }
 
+  /**
+   * Returns the combined (TỔNG CỘNG) totals for every marketing user — one
+   * entry per user, without per-product rows.
+   */
+  async summarizeAll(
+    start_date: string,
+    end_date: string,
+  ): Promise<MarketingSummaryAllResponse> {
+    const { start_date: start, end_date: end } = this.validateDateRange(
+      start_date,
+      end_date,
+    );
+
+    const marketers = await this.userRepo.find({
+      where: { type: 'marketing' },
+      select: ['id', 'display_name'],
+      order: { display_name: 'ASC' },
+    });
+
+    const users = await Promise.all(
+      marketers.map(async (m) => {
+        const summary = await this.summarize({
+          marketing_user_id: m.id,
+          start_date: start,
+          end_date: end,
+        });
+        return {
+          marketing_user_id: summary.marketing_user_id,
+          marketing_user_display_name: summary.marketing_user_display_name,
+          ads_account_ids: summary.ads_account_ids,
+          total_orders: summary.total_orders,
+          unmatched: summary.unmatched,
+          totals: summary.totals,
+        };
+      }),
+    );
+
+    users.sort((a, b) => b.totals.profit - a.totals.profit);
+
+    return { start_date: start, end_date: end, users };
+  }
+
   private validateQuery(q: MarketingSummaryQuery): MarketingSummaryQuery {
     const marketing_user_id = Number(q.marketing_user_id);
     if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
@@ -192,20 +250,29 @@ export class MarketingSummaryService {
         'marketing_user_id must be a positive integer',
       );
     }
-    if (!YMD_RE.test(q.start_date)) {
+    const { start_date, end_date } = this.validateDateRange(
+      q.start_date,
+      q.end_date,
+    );
+    return { marketing_user_id, start_date, end_date };
+  }
+
+  private validateDateRange(
+    startDate: string,
+    endDate: string,
+  ): { start_date: string; end_date: string } {
+    const start = String(startDate || '').trim();
+    const end = String(endDate || '').trim() || start;
+    if (!YMD_RE.test(start)) {
       throw new BadRequestException('start_date must be YYYY-MM-DD');
     }
-    if (!YMD_RE.test(q.end_date)) {
+    if (!YMD_RE.test(end)) {
       throw new BadRequestException('end_date must be YYYY-MM-DD');
     }
-    if (q.start_date > q.end_date) {
+    if (start > end) {
       throw new BadRequestException('start_date must be on or before end_date');
     }
-    return {
-      marketing_user_id,
-      start_date: q.start_date,
-      end_date: q.end_date,
-    };
+    return { start_date: start, end_date: end };
   }
 
   /**

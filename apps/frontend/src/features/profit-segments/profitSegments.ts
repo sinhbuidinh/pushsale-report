@@ -100,7 +100,7 @@ export function findSegmentForPrice(
 }
 
 /**
- * Classifies a `% Profit / Revenue` value against a segment.
+ * Classifies a ROS (%) value against a segment.
  * Returns null when `pct` is null/non-finite so callers can render an em-dash.
  */
 export function classifyProfitPct(

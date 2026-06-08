@@ -329,7 +329,7 @@ const SegmentCard: React.FC<SegmentCardProps> = ({ segment, onSaved }) => {
 
           <Box>
             <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 700 }}>
-              Ngưỡng % Profit / Revenue
+              ROS %
             </Typography>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
               <Tooltip title="🔴 Dưới mức này được coi là Nguy hiểm">
@@ -537,7 +537,7 @@ const ProfitSegmentsPage: React.FC = () => {
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             Cấu hình 3 phân khúc theo giá bán và 4 dải màu đánh giá{' '}
-            <strong>% Profit / Revenue</strong> cho báo cáo Marketing Summary.
+            <strong>ROS %</strong> cho báo cáo Marketing Summary.
           </Typography>
         </Box>
         <Button
