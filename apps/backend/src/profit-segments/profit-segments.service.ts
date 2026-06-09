@@ -7,7 +7,21 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { PoasSettings } from './poas-settings.entity';
 import { ProfitSegment } from './profit-segment.entity';
+
+export interface PoasSettingsDto {
+  id: number;
+  danger_max: number;
+  warning_max: number;
+  good_max: number;
+}
+
+export interface UpdatePoasSettingsDto {
+  danger_max?: number;
+  warning_max?: number;
+  good_max?: number;
+}
 
 export interface ProfitSegmentDto {
   id: number;
@@ -46,6 +60,12 @@ interface SeedSpec {
  * product spec ("Sản phẩm Giá rẻ / Trung bình / Cao") and can be tuned later
  * from the settings page without code changes.
  */
+const DEFAULT_POAS: Omit<PoasSettingsDto, 'id'> = {
+  danger_max: 1.1,
+  warning_max: 1.5,
+  good_max: 2.2,
+};
+
 const DEFAULT_SEGMENTS: SeedSpec[] = [
   {
     code: 'low',
@@ -79,6 +99,13 @@ const DEFAULT_SEGMENTS: SeedSpec[] = [
   },
 ];
 
+const toPoasDto = (e: PoasSettings): PoasSettingsDto => ({
+  id: e.id,
+  danger_max: Number(e.danger_max),
+  warning_max: Number(e.warning_max),
+  good_max: Number(e.good_max),
+});
+
 const toDto = (e: ProfitSegment): ProfitSegmentDto => ({
   id: e.id,
   code: e.code,
@@ -98,10 +125,15 @@ export class ProfitSegmentsService implements OnModuleInit {
   constructor(
     @InjectRepository(ProfitSegment)
     private readonly repo: Repository<ProfitSegment>,
+    @InjectRepository(PoasSettings)
+    private readonly poasRepo: Repository<PoasSettings>,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.seedDefaultsIfMissing();
+    await Promise.all([
+      this.seedDefaultsIfMissing(),
+      this.seedPoasDefaultsIfMissing(),
+    ]);
   }
 
   /** Inserts any missing default segments (idempotent, never overwrites). */
@@ -112,6 +144,67 @@ export class ProfitSegmentsService implements OnModuleInit {
       await this.repo.save(this.repo.create(spec));
       this.logger.log(`Seeded default profit segment "${spec.code}"`);
     }
+  }
+
+  /** Inserts the singleton POAS settings row when missing. */
+  async seedPoasDefaultsIfMissing(): Promise<void> {
+    const count = await this.poasRepo.count();
+    if (count > 0) return;
+    await this.poasRepo.save(this.poasRepo.create(DEFAULT_POAS));
+    this.logger.log('Seeded default POAS settings');
+  }
+
+  async getPoasSettings(): Promise<PoasSettingsDto> {
+    await this.seedPoasDefaultsIfMissing();
+    const [row] = await this.poasRepo.find({
+      order: { id: 'ASC' },
+      take: 1,
+    });
+    if (!row) {
+      const created = await this.poasRepo.save(
+        this.poasRepo.create(DEFAULT_POAS),
+      );
+      return toPoasDto(created);
+    }
+    return toPoasDto(row);
+  }
+
+  async updatePoasSettings(
+    dto: UpdatePoasSettingsDto,
+  ): Promise<PoasSettingsDto> {
+    const current = await this.getPoasSettings();
+    const danger =
+      dto.danger_max != null
+        ? this.assertRatio('danger_max', dto.danger_max)
+        : current.danger_max;
+    const warning =
+      dto.warning_max != null
+        ? this.assertRatio('warning_max', dto.warning_max)
+        : current.warning_max;
+    const good =
+      dto.good_max != null
+        ? this.assertRatio('good_max', dto.good_max)
+        : current.good_max;
+
+    if (!(danger <= warning && warning <= good)) {
+      throw new BadRequestException(
+        'POAS thresholds must satisfy danger_max <= warning_max <= good_max',
+      );
+    }
+
+    await this.poasRepo.update(current.id, {
+      danger_max: danger,
+      warning_max: warning,
+      good_max: good,
+    });
+
+    return this.getPoasSettings();
+  }
+
+  async resetPoasToDefaults(): Promise<PoasSettingsDto> {
+    const current = await this.getPoasSettings();
+    await this.poasRepo.update(current.id, DEFAULT_POAS);
+    return this.getPoasSettings();
   }
 
   async findAll(): Promise<ProfitSegmentDto[]> {
@@ -185,8 +278,12 @@ export class ProfitSegmentsService implements OnModuleInit {
     return toDto(updated);
   }
 
-  /** Restores the three default segments to their initial threshold values. */
-  async resetToDefaults(): Promise<ProfitSegmentDto[]> {
+  /** Restores POAS settings and the three default ROS segments. */
+  async resetToDefaults(): Promise<{
+    poas: PoasSettingsDto;
+    segments: ProfitSegmentDto[];
+  }> {
+    const poas = await this.resetPoasToDefaults();
     for (const spec of DEFAULT_SEGMENTS) {
       const existing = await this.repo.findOne({ where: { code: spec.code } });
       if (existing) {
@@ -195,7 +292,8 @@ export class ProfitSegmentsService implements OnModuleInit {
         await this.repo.save(this.repo.create(spec));
       }
     }
-    return this.findAll();
+    const segments = await this.findAll();
+    return { poas, segments };
   }
 
   private assertNonNegative(label: string, raw: unknown): number {
@@ -213,6 +311,14 @@ export class ProfitSegmentsService implements OnModuleInit {
     }
     if (n < -100 || n > 100) {
       throw new BadRequestException(`${label} must be between -100 and 100`);
+    }
+    return n;
+  }
+
+  private assertRatio(label: string, raw: unknown): number {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new BadRequestException(`${label} must be a non-negative number`);
     }
     return n;
   }

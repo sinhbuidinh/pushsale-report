@@ -10,6 +10,16 @@
  * All segments share the same band semantics but pick different cut-offs.
  */
 
+export interface PoasSettings {
+  id: number;
+  /** Exclusive upper bound of the Danger band (ratio). */
+  danger_max: number;
+  /** Exclusive upper bound of the Warning band (ratio). */
+  warning_max: number;
+  /** Exclusive upper bound of the Good band; above → Excellent (ratio). */
+  good_max: number;
+}
+
 export interface ProfitSegment {
   id: number;
   code: string;
@@ -100,6 +110,21 @@ export function findSegmentForPrice(
 }
 
 /**
+ * Classifies a POAS ratio against global settings.
+ * Returns null when `ratio` is null/non-finite so callers can render an em-dash.
+ */
+export function classifyPoasRatio(
+  settings: PoasSettings,
+  ratio: number | null,
+): ProfitBand | null {
+  if (ratio == null || !Number.isFinite(ratio)) return null;
+  if (ratio < settings.danger_max) return 'danger';
+  if (ratio < settings.warning_max) return 'warning';
+  if (ratio < settings.good_max) return 'good';
+  return 'excellent';
+}
+
+/**
  * Classifies a ROS (%) value against a segment.
  * Returns null when `pct` is null/non-finite so callers can render an em-dash.
  */
@@ -132,3 +157,9 @@ export const formatVnd = (n: number | null): string => {
 
 export const formatPct = (n: number): string =>
   `${Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}%`;
+
+export const formatRatio = (n: number): string =>
+  Number(n).toLocaleString('vi-VN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
