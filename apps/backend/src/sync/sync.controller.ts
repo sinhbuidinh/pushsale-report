@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Query,
+  Param,
   UseGuards,
   BadRequestException,
   HttpException,
@@ -69,6 +70,48 @@ export class SyncController {
         status: true,
         data: result,
       };
+    } catch (error: unknown) {
+      return {
+        status: false,
+        error: httpErrorMessage(error),
+      };
+    }
+  }
+
+  /** Re-fetch one PushSale page for an existing sync_log row. */
+  @Post('logs/:id/resync')
+  async resyncSyncLog(@Param('id') idStr: string) {
+    const id = parseInt(String(idStr).trim(), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException({
+        status: false,
+        error: 'Invalid sync log id.',
+      });
+    }
+    try {
+      const data = await this.syncService.resyncSyncLogPage(id);
+      return { status: true, data };
+    } catch (error: unknown) {
+      return {
+        status: false,
+        error: httpErrorMessage(error),
+      };
+    }
+  }
+
+  /** Re-process orders from the saved response (no PushSale API call). */
+  @Post('logs/:id/replay')
+  async replaySyncLog(@Param('id') idStr: string) {
+    const id = parseInt(String(idStr).trim(), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException({
+        status: false,
+        error: 'Invalid sync log id.',
+      });
+    }
+    try {
+      const data = await this.syncService.replaySyncLog(id);
+      return { status: true, data };
     } catch (error: unknown) {
       return {
         status: false,

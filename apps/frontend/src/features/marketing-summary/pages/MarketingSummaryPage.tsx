@@ -62,6 +62,7 @@ interface MarketingSummaryRow {
   item_code: string;
   item_name: string;
   total_quantity: number;
+  total_orders: number;
   selling_price: number;
   cost_price: number;
   delivery_fee_per_unit: number;
@@ -88,6 +89,7 @@ interface MarketingSummaryUnmatched {
 
 interface MarketingSummaryTotals {
   total_quantity: number;
+  total_orders: number;
   ads_spend: number;
   tax_ads: number;
   revenue: number;
@@ -109,6 +111,7 @@ interface MarketingSummaryResponse {
   end_date: string;
   ads_account_ids: string[];
   total_orders: number;
+  total_orders_created: number;
   rows: MarketingSummaryRow[];
   unmatched: MarketingSummaryUnmatched;
   totals: MarketingSummaryTotals;
@@ -119,6 +122,7 @@ interface MarketingSummaryAllUser {
   marketing_user_display_name: string;
   ads_account_ids: string[];
   total_orders: number;
+  total_orders_created: number;
   unmatched: MarketingSummaryUnmatched;
   totals: MarketingSummaryTotals;
 }
@@ -474,6 +478,7 @@ const aggregateAllUserTotals = (
   const base = users.reduce<MarketingSummaryTotals>(
     (acc, { totals: t }) => ({
       total_quantity: acc.total_quantity + t.total_quantity,
+      total_orders: acc.total_orders + t.total_orders,
       ads_spend: acc.ads_spend + t.ads_spend,
       tax_ads: acc.tax_ads + t.tax_ads,
       revenue: acc.revenue + t.revenue,
@@ -489,6 +494,7 @@ const aggregateAllUserTotals = (
     }),
     {
       total_quantity: 0,
+      total_orders: 0,
       ads_spend: 0,
       tax_ads: 0,
       revenue: 0,
@@ -535,35 +541,35 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
       key: 'data',
       label: 'Data',
       format: 'number',
-      tooltip: 'Số lượng (SL) của sản phẩm.',
-      value: (r) => r.total_quantity,
+      tooltip: 'Số đơn đã xác nhận có sản phẩm này (tạo trong kỳ).',
+      value: (r) => r.total_orders,
       unmatched: () => null,
-      total: (t) => t.total_quantity,
+      total: (t) => t.total_orders,
     },
     {
       key: 'confirmed_orders',
       label: 'Chốt Đơn',
       format: 'number',
-      tooltip: 'Bằng số lượng (SL) của sản phẩm.',
-      value: (r) => r.total_quantity,
+      tooltip: 'Số đơn đã xác nhận có sản phẩm này (tạo trong kỳ).',
+      value: (r) => r.total_orders,
       unmatched: () => null,
-      total: (t) => t.total_quantity,
+      total: (t) => t.total_orders,
     },
     {
       key: 'ads_per_data',
       label: 'Ads/Data',
       format: 'number',
-      value: (r) => safeDiv(r.ads_spend, r.total_quantity),
+      value: (r) => safeDiv(r.ads_spend, r.total_orders),
       unmatched: () => null,
-      total: (t) => safeDiv(t.ads_spend, t.total_quantity),
+      total: (t) => safeDiv(t.ads_spend, t.total_orders),
     },
     {
       key: 'ads_per_order',
       label: 'Ads/Đơn',
       format: 'number',
-      value: (r) => safeDiv(r.ads_spend, r.total_quantity),
+      value: (r) => safeDiv(r.ads_spend, r.total_orders),
       unmatched: () => null,
-      total: (t) => safeDiv(t.ads_spend, t.total_quantity),
+      total: (t) => safeDiv(t.ads_spend, t.total_orders),
     },
     {
       key: 'revenue_estimate',
@@ -575,17 +581,6 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
       value: (r) => r.revenue_estimate,
       unmatched: () => null,
       total: (t) => t.revenue_estimate,
-    },
-    {
-      key: 'actual_revenue',
-      label: 'Doanh số thực',
-      tooltip:
-        'Tổng doanh thu theo số lượng × giá bán từng size (không nhân 0,8).',
-      format: 'number',
-      emphasize: true,
-      value: (r) => r.revenue,
-      unmatched: () => null,
-      total: (t) => t.revenue,
     },
     {
       key: 'revenue_tax',
@@ -614,7 +609,7 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
       },
       {
         key: 'revenue',
-        label: 'Doanh thu',
+        label: 'Doanh số thực',
         format: 'number',
         value: (r) => r.revenue,
         unmatched: () => null,
@@ -1247,7 +1242,14 @@ const MarketingSummaryPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 700 }}>Marketing user</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Kỳ</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Đơn đã xác nhận
+                    <Tooltip title="Đơn đã xác nhận được tạo trong kỳ (theo ngày tạo đơn).">
+                      <span>Đơn đã xác nhận</span>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    <Tooltip title="Tổng số đơn được tạo trong kỳ (theo ngày tạo đơn).">
+                      <span>Tổng đơn trong ngày</span>
+                    </Tooltip>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Tài khoản quảng cáo</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
@@ -1264,6 +1266,9 @@ const MarketingSummaryPage: React.FC = () => {
                     <TableCell>{dateRangeLabel ?? '—'}</TableCell>
                     <TableCell align="right">
                       {fmtNum(user.total_orders)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {fmtNum(user.total_orders_created)}
                     </TableCell>
                     <TableCell sx={{ wordBreak: 'break-all', maxWidth: 360 }}>
                       {user.ads_account_ids.length === 0 ? (
@@ -1555,7 +1560,14 @@ const MarketingSummaryPage: React.FC = () => {
                 <TableRow>
                   <TableCell sx={{ fontWeight: 700 }}>Kỳ</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Đơn đã xác nhận
+                    <Tooltip title="Đơn đã xác nhận được tạo trong kỳ (theo ngày tạo đơn).">
+                      <span>Đơn đã xác nhận</span>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    <Tooltip title="Tổng số đơn được tạo trong kỳ (theo ngày tạo đơn).">
+                      <span>Tổng đơn trong ngày</span>
+                    </Tooltip>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Tài khoản quảng cáo</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
@@ -1568,6 +1580,9 @@ const MarketingSummaryPage: React.FC = () => {
                   <TableCell>{dateRangeLabel ?? '—'}</TableCell>
                   <TableCell align="right">
                     {fmtNum(singleData.total_orders)}
+                  </TableCell>
+                  <TableCell align="right">
+                    {fmtNum(singleData.total_orders_created)}
                   </TableCell>
                   <TableCell sx={{ wordBreak: 'break-all', maxWidth: 360 }}>
                     {singleData.ads_account_ids.length === 0 ? (

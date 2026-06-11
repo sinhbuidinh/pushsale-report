@@ -138,11 +138,71 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `Daily Facebook Ads sync cron registered: "${cronExpression}" (${timeZone}).`,
     );
+
+    void this.catchUpMissedDailyFacebookAdsSync();
   }
 
   onModuleDestroy(): void {
     void this.dailyFacebookAdsCronJob?.stop();
     this.dailyFacebookAdsCronJob = null;
+  }
+
+  /**
+   * Runs once at boot. If yesterday's ads costs are not fully synced for every
+   * marketing user with ad accounts, triggers the daily sync flow now.
+   */
+  private async catchUpMissedDailyFacebookAdsSync(): Promise<void> {
+    if (this.isDailyCronRunning) {
+      return;
+    }
+
+    try {
+      const yesterday = yesterdayCalendarInZone(getAppTimeZone());
+      const fullySynced = await this.isFullySyncedForDate(yesterday);
+      if (fullySynced) {
+        this.logger.log(
+          `Startup catch-up Facebook Ads: ${yesterday} already fully synced; nothing to do.`,
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Startup catch-up Facebook Ads: incomplete sync for ${yesterday}; triggering sync now.`,
+      );
+      this.isDailyCronRunning = true;
+      const summary = await this.syncAllMarketingUsers(yesterday);
+      this.logger.log(
+        `Startup catch-up Facebook Ads finished: ${summary.users_synced} user(s) synced, ${summary.users_skipped_already_synced} already complete, ${summary.users_failed} failed.`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Startup catch-up Facebook Ads failed: ${err instanceof Error ? err.message : String(err)}. Daily cron will still run as scheduled.`,
+      );
+    } finally {
+      this.isDailyCronRunning = false;
+    }
+  }
+
+  /** True when every marketing user with ad accounts has all accounts synced. */
+  private async isFullySyncedForDate(syncDate: string): Promise<boolean> {
+    const marketingUsers = await this.listMarketingUsers();
+    const withAccounts = marketingUsers.filter(
+      (user) => user.ads_account_count > 0,
+    );
+    if (withAccounts.length === 0) {
+      return true;
+    }
+
+    for (const user of withAccounts) {
+      const status = await this.getSyncStatusForMarketingUser(
+        user.user_id,
+        syncDate,
+      );
+      if (!status.synced) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Cron entry: sync yesterday's ads costs for every marketing user with ad accounts. */

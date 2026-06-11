@@ -33,6 +33,8 @@ interface SyncLog {
   status: SyncStatus;
   synced_count: number;
   error_details: string | null;
+  page_no: number | null;
+  has_response?: boolean;
   data?: object | null;
 }
 
@@ -41,6 +43,10 @@ interface SyncLogsResponse {
   total: number;
   page: number;
   limit: number;
+}
+
+function canReplayLog(log: SyncLog): boolean {
+  return log.page_no != null && log.has_response === true;
 }
 
 function getDetailsRaw(log: SyncLog): string | null {
@@ -204,6 +210,35 @@ const Dashboard = () => {
     },
   });
 
+  const resyncMutation = useMutation({
+    mutationFn: async (logId: number) => {
+      const response = await apiClient.post(`/sync/logs/${logId}/resync`);
+      if (response.data.status) {
+        return response.data.data;
+      }
+      throw new Error(response.data.error || 'Failed to re-sync page');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-logs'] });
+    },
+  });
+
+  const replayMutation = useMutation({
+    mutationFn: async (logId: number) => {
+      const response = await apiClient.post(`/sync/logs/${logId}/replay`);
+      if (response.data.status) {
+        return response.data.data;
+      }
+      throw new Error(response.data.error || 'Failed to replay sync log');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-logs'] });
+    },
+  });
+
+  const pageActionPending =
+    resyncMutation.isPending || replayMutation.isPending;
+
   const handleSync = () => {
     if (!selectedDate) {
       return;
@@ -263,6 +298,17 @@ const Dashboard = () => {
         {syncMutation.isError && (
           <Alert severity="error" sx={{ mt: 2 }}>{(syncMutation.error as any).message}</Alert>
         )}
+        {resyncMutation.isError && (
+          <Alert severity="error" sx={{ mt: 2 }}>{(resyncMutation.error as any).message}</Alert>
+        )}
+        {replayMutation.isError && (
+          <Alert severity="error" sx={{ mt: 2 }}>{(replayMutation.error as any).message}</Alert>
+        )}
+        {(resyncMutation.isSuccess || replayMutation.isSuccess) && (
+          <Alert severity="success" sx={{ mt: 2 }}>
+            Page action completed successfully.
+          </Alert>
+        )}
       </Paper>
 
       <Typography variant="h5" sx={{ mb: 2 }}>Sync History</Typography>
@@ -278,10 +324,12 @@ const Dashboard = () => {
                 <TableRow>
                   <TableCell>Triggered At</TableCell>
                   <TableCell>Sync For Date</TableCell>
+                  <TableCell align="right">Page</TableCell>
                   <TableCell>Trigger</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell align="right">Count</TableCell>
                   <TableCell>Details</TableCell>
+                  <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -289,15 +337,52 @@ const Dashboard = () => {
                   <TableRow key={log.id}>
                     <TableCell>{new Date(log.created_at).toLocaleString()}</TableCell>
                     <TableCell>{log.sync_date}</TableCell>
+                    <TableCell align="right">
+                      {log.page_no ?? '—'}
+                    </TableCell>
                     <TableCell>{getTriggerChip(log.trigger_source ?? SyncTriggerSource.Api)}</TableCell>
                     <TableCell>{getStatusChip(log.status)}</TableCell>
                     <TableCell align="right">{log.synced_count}</TableCell>
                     <SyncDetailsCell log={log} />
+                    <TableCell>
+                      {canReplayLog(log) ? (
+                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                          <Tooltip title="Re-fetch this page from PushSale and update orders">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                disabled={pageActionPending}
+                                onClick={() => resyncMutation.mutate(log.id)}
+                              >
+                                Re-sync page
+                              </Button>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="Re-process orders from the saved API response">
+                            <span>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                disabled={pageActionPending}
+                                onClick={() => replayMutation.mutate(log.id)}
+                              >
+                                Re-normalize
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
                 {data?.data.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} align="center">No sync history found.</TableCell>
+                    <TableCell colSpan={8} align="center">No sync history found.</TableCell>
                   </TableRow>
                 )}
               </TableBody>

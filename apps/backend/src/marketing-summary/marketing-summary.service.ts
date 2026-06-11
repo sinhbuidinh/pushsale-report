@@ -18,6 +18,11 @@ const ADS_TAX_RATE = 0.1; // 10% tax of ads spend
 const COST_ESTIMATE_FACTOR = 0.8; // estimated cost (some orders may be returned)
 const RISK_FEE_RATE = 0.1; // 10% of total cost estimate
 
+interface OrderDetailLine {
+  item_code: string;
+  quantity: number;
+}
+
 export interface MarketingSummaryQuery {
   marketing_user_id: number;
   start_date: string;
@@ -42,6 +47,8 @@ export interface MarketingSummaryProductRow {
   item_name: string;
   /** Total units of this product across the matched orders. */
   total_quantity: number;
+  /** Number of confirmed orders that include this product (qty &gt; 0). */
+  total_orders: number;
   selling_price: number;
   cost_price: number;
   delivery_fee_per_unit: number;
@@ -76,6 +83,8 @@ export interface MarketingSummaryProductRow {
 
 export interface MarketingSummaryTotals {
   total_quantity: number;
+  /** Distinct confirmed orders in the period (not summed per product). */
+  total_orders: number;
   ads_spend: number;
   tax_ads: number;
   revenue: number;
@@ -108,8 +117,10 @@ export interface MarketingSummaryResponse {
   start_date: string;
   end_date: string;
   ads_account_ids: string[];
-  /** Number of confirmed orders matched by the filter (total_quantity > 0). */
+  /** Confirmed orders (total_quantity &gt; 0) whose created date falls in the range. */
   total_orders: number;
+  /** Number of orders whose `created_time` falls within the date range. */
+  total_orders_created: number;
   rows: MarketingSummaryProductRow[];
   unmatched: MarketingSummaryUnmatched;
   /** Combined totals across all product rows AND the unmatched bucket. */
@@ -121,6 +132,7 @@ export interface MarketingSummaryAllUserEntry {
   marketing_user_display_name: string;
   ads_account_ids: string[];
   total_orders: number;
+  total_orders_created: number;
   unmatched: MarketingSummaryUnmatched;
   totals: MarketingSummaryTotals;
 }
@@ -164,12 +176,12 @@ export class MarketingSummaryService {
       );
     }
 
-    const orders = await this.findConfirmedOrders(
-      marketing_user_id,
-      start_date,
-      end_date,
-    );
-    const totalProductQuantity = await this.computeProductQuantities(orders);
+    const [orders, total_orders_created] = await Promise.all([
+      this.findConfirmedOrders(marketing_user_id, start_date, end_date),
+      this.countCreatedOrders(marketing_user_id, start_date, end_date),
+    ]);
+    const productAggregates = await this.computeProductAggregates(orders);
+    const totalProductQuantity = productAggregates.quantities;
 
     const adsAccounts = await this.adsAccountRepo.find({
       where: { user_id: marketing_user_id },
@@ -199,7 +211,8 @@ export class MarketingSummaryService {
       productIds,
       productMap,
       adaptionMap,
-      totalProductQuantity,
+      productAggregates,
+      orders,
       adsAttribution,
     );
 
@@ -218,9 +231,10 @@ export class MarketingSummaryService {
       end_date,
       ads_account_ids: adsAccountIds,
       total_orders: orders.length,
+      total_orders_created,
       rows,
       unmatched,
-      totals: this.computeTotals(rows, unmatched),
+      totals: this.computeTotals(rows, unmatched, orders.length),
     };
   }
 
@@ -255,6 +269,7 @@ export class MarketingSummaryService {
           marketing_user_display_name: summary.marketing_user_display_name,
           ads_account_ids: summary.ads_account_ids,
           total_orders: summary.total_orders,
+          total_orders_created: summary.total_orders_created,
           unmatched: summary.unmatched,
           totals: summary.totals,
         };
@@ -299,7 +314,7 @@ export class MarketingSummaryService {
   }
 
   /**
-   * Confirmed orders for the marketing user where the date prefix of `confirm_time`
+   * Confirmed orders for the marketing user where the date prefix of `created_time`
    * is within [start_date, end_date]. Uses SUBSTRING to handle both
    * `YYYY-MM-DD HH:MM:SS` and `YYYY-MM-DDTHH:MM:SS...` storage formats.
    */
@@ -313,23 +328,102 @@ export class MarketingSummaryService {
       .where('o.marketing_user_id = :uid', { uid: marketingUserId })
       .andWhere('o.total_quantity > 0')
       .andWhere('o.confirm_time IS NOT NULL')
+      .andWhere('o.created_time IS NOT NULL')
       .andWhere(
-        'SUBSTRING(o.confirm_time, 1, 10) BETWEEN :startDate AND :endDate',
+        'SUBSTRING(o.created_time, 1, 10) BETWEEN :startDate AND :endDate',
         { startDate, endDate },
       )
       .getMany();
   }
 
   /**
-   * Builds `{ product_id -> total_quantity }` from the list of orders.
-   * - Single-product orders: add `order.total_quantity` to that product.
-   * - Multi-product orders: sum quantities from `order_details`, mapping
-   *   `item_code` to `product_id`.
+   * Orders for the marketing user where the date prefix of `created_time`
+   * is within [start_date, end_date].
    */
-  private async computeProductQuantities(
-    orders: Order[],
-  ): Promise<Map<number, number>> {
-    const totals = new Map<number, number>();
+  private async countCreatedOrders(
+    marketingUserId: number,
+    startDate: string,
+    endDate: string,
+  ): Promise<number> {
+    const raw = await this.orderRepo
+      .createQueryBuilder('o')
+      .select('COUNT(*)', 'count')
+      .where('o.marketing_user_id = :uid', { uid: marketingUserId })
+      .andWhere('o.created_time IS NOT NULL')
+      .andWhere(
+        'SUBSTRING(o.created_time, 1, 10) BETWEEN :startDate AND :endDate',
+        { startDate, endDate },
+      )
+      .getRawOne<{ count: string }>();
+    return Number(raw?.count ?? 0);
+  }
+
+  private async loadMultiOrderDetailContext(multiOrderIds: number[]): Promise<{
+    detailsByOrderId: Map<number, OrderDetailLine[]>;
+    codeToProductId: Map<string, number>;
+  }> {
+    const detailsByOrderId = new Map<number, OrderDetailLine[]>();
+    const codeToProductId = new Map<string, number>();
+    if (multiOrderIds.length === 0) {
+      return { detailsByOrderId, codeToProductId };
+    }
+
+    const detailRows = await this.orderDetailRepo
+      .createQueryBuilder('od')
+      .innerJoin('od.order', 'o')
+      .select('od.item_code', 'item_code')
+      .addSelect('od.quantity', 'quantity')
+      .addSelect('o.id', 'order_id')
+      .where('o.id IN (:...ids)', { ids: multiOrderIds })
+      .getRawMany<{
+        item_code: string;
+        quantity: string | number;
+        order_id: string | number;
+      }>();
+
+    for (const row of detailRows) {
+      const orderId = Number(row.order_id);
+      if (!Number.isFinite(orderId)) continue;
+      const list = detailsByOrderId.get(orderId) ?? [];
+      list.push({
+        item_code: row.item_code,
+        quantity: Number(row.quantity || 0),
+      });
+      detailsByOrderId.set(orderId, list);
+    }
+
+    const codes = Array.from(
+      new Set(
+        detailRows.map((d) => d.item_code).filter((c): c is string => !!c),
+      ),
+    );
+    if (codes.length > 0) {
+      const products = await this.productRepo.find({
+        where: { item_code: In(codes) },
+        select: ['id', 'item_code'],
+      });
+      for (const p of products) {
+        codeToProductId.set(p.item_code, p.id);
+      }
+    }
+
+    return { detailsByOrderId, codeToProductId };
+  }
+
+  /**
+   * Builds per-product quantity and order-count maps from confirmed orders.
+   * - Single-product orders: quantity += order.total_quantity; orders += 1.
+   * - Multi-product orders: roll up from order_details; each product with
+   *   qty &gt; 0 in an order counts as one order for that product.
+   */
+  private async computeProductAggregates(orders: Order[]): Promise<{
+    quantities: Map<number, number>;
+    orderCounts: Map<number, number>;
+    detailsByOrderId: Map<number, OrderDetailLine[]>;
+    codeToProductId: Map<string, number>;
+  }> {
+    const quantities = new Map<number, number>();
+    const orderCounts = new Map<number, number>();
     const multiOrderIds: number[] = [];
 
     for (const order of orders) {
@@ -344,45 +438,77 @@ export class MarketingSummaryService {
         const pid = uniqueProductIds[0];
         const qty = Number(order.total_quantity || 0);
         if (qty > 0) {
-          totals.set(pid, (totals.get(pid) ?? 0) + qty);
+          quantities.set(pid, (quantities.get(pid) ?? 0) + qty);
+          orderCounts.set(pid, (orderCounts.get(pid) ?? 0) + 1);
         }
       } else {
         multiOrderIds.push(order.id);
       }
     }
 
-    if (multiOrderIds.length === 0) {
-      return totals;
-    }
+    const { detailsByOrderId, codeToProductId } =
+      await this.loadMultiOrderDetailContext(multiOrderIds);
 
-    const details = await this.orderDetailRepo
-      .createQueryBuilder('od')
-      .where('od.order_id IN (:...ids)', { ids: multiOrderIds })
-      .getMany();
-
-    const codes = Array.from(
-      new Set(details.map((d) => d.item_code).filter((c): c is string => !!c)),
-    );
-    const codeToProductId = new Map<string, number>();
-    if (codes.length > 0) {
-      const products = await this.productRepo.find({
-        where: { item_code: In(codes) },
-        select: ['id', 'item_code'],
-      });
-      for (const p of products) {
-        codeToProductId.set(p.item_code, p.id);
+    for (const orderId of multiOrderIds) {
+      const seenProductIds = new Set<number>();
+      for (const detail of detailsByOrderId.get(orderId) ?? []) {
+        const pid = codeToProductId.get(detail.item_code);
+        if (pid == null) continue;
+        const qty = Number(detail.quantity || 0);
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+        quantities.set(pid, (quantities.get(pid) ?? 0) + qty);
+        seenProductIds.add(pid);
+      }
+      for (const pid of seenProductIds) {
+        orderCounts.set(pid, (orderCounts.get(pid) ?? 0) + 1);
       }
     }
 
-    for (const detail of details) {
-      const pid = codeToProductId.get(detail.item_code);
-      if (pid == null) continue;
-      const qty = Number(detail.quantity || 0);
-      if (!Number.isFinite(qty) || qty <= 0) continue;
-      totals.set(pid, (totals.get(pid) ?? 0) + qty);
+    return { quantities, orderCounts, detailsByOrderId, codeToProductId };
+  }
+
+  /** Distinct orders that include any of `targetProductIds` with qty &gt; 0. */
+  private countOrdersForProductSet(
+    orders: Order[],
+    targetProductIds: number[],
+    detailsByOrderId: Map<number, OrderDetailLine[]>,
+    codeToProductId: Map<string, number>,
+  ): number {
+    const target = new Set(targetProductIds);
+    let count = 0;
+
+    for (const order of orders) {
+      const productIds = (order.product_ids || [])
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      const uniqueProductIds = Array.from(new Set(productIds));
+      if (uniqueProductIds.length === 0) {
+        continue;
+      }
+
+      if (uniqueProductIds.length === 1) {
+        const pid = uniqueProductIds[0];
+        if (target.has(pid) && Number(order.total_quantity || 0) > 0) {
+          count++;
+        }
+        continue;
+      }
+
+      const matched = new Set<number>();
+      for (const detail of detailsByOrderId.get(order.id) ?? []) {
+        const pid = codeToProductId.get(detail.item_code);
+        if (pid == null || !target.has(pid)) continue;
+        const qty = Number(detail.quantity || 0);
+        if (Number.isFinite(qty) && qty > 0) {
+          matched.add(pid);
+        }
+      }
+      if (matched.size > 0) {
+        count++;
+      }
     }
 
-    return totals;
+    return count;
   }
 
   /**
@@ -539,6 +665,7 @@ export class MarketingSummaryService {
     item_code: string;
     item_name: string;
     total_quantity: number;
+    total_orders: number;
     selling_price: number;
     cost_price: number;
     delivery_fee_per_unit: number;
@@ -579,6 +706,7 @@ export class MarketingSummaryService {
       item_code: input.item_code,
       item_name: input.item_name,
       total_quantity: input.total_quantity,
+      total_orders: input.total_orders,
       selling_price: input.selling_price,
       cost_price: input.cost_price,
       delivery_fee_per_unit: input.delivery_fee_per_unit,
@@ -604,6 +732,7 @@ export class MarketingSummaryService {
     productMap: Map<number, Product>,
     adaptionMap: Map<number, ProductAdaption>,
     quantityByProduct: Map<number, number>,
+    orderCountByProduct: Map<number, number>,
     adsSpendByProduct: Map<number, number>,
   ): MarketingSummaryProductRow | null {
     const product = productMap.get(pid);
@@ -620,6 +749,7 @@ export class MarketingSummaryService {
     );
     const taxValuePct = Number(product.tax_value || 0);
     const qty = quantityByProduct.get(pid) ?? 0;
+    const orderCount = orderCountByProduct.get(pid) ?? 0;
     const adsSpend = adsSpendByProduct.get(pid) ?? 0;
     const revenue = qty * sellingPrice;
     const revenueEstimate = revenue * REVENUE_RETURN_FACTOR;
@@ -638,6 +768,7 @@ export class MarketingSummaryService {
       item_code: product.item_code,
       item_name: product.item_name,
       total_quantity: qty,
+      total_orders: orderCount,
       selling_price: sellingPrice,
       cost_price: costPrice,
       delivery_fee_per_unit: deliveryFeePerUnit,
@@ -672,6 +803,9 @@ export class MarketingSummaryService {
     productMap: Map<number, Product>,
     adaptionMap: Map<number, ProductAdaption>,
     quantityByProduct: Map<number, number>,
+    orders: Order[],
+    detailsByOrderId: Map<number, OrderDetailLine[]>,
+    codeToProductId: Map<string, number>,
   ): MarketingSummaryProductRow | null {
     let totalQuantity = 0;
     let revenue = 0;
@@ -726,6 +860,12 @@ export class MarketingSummaryService {
       memberNames.length === 1
         ? memberNames[0]
         : `${memberNames[0]} (+${memberNames.length - 1} sizes)`;
+    const totalOrders = this.countOrdersForProductSet(
+      orders,
+      group.productIds,
+      detailsByOrderId,
+      codeToProductId,
+    );
 
     return this.buildMetricRow({
       row_kind: 'group',
@@ -736,6 +876,7 @@ export class MarketingSummaryService {
       item_code: formatGroupProductCodeForDisplay(group.itemCode),
       item_name: itemName,
       total_quantity: totalQuantity,
+      total_orders: totalOrders,
       selling_price: 0,
       cost_price: 0,
       delivery_fee_per_unit: 0,
@@ -756,7 +897,13 @@ export class MarketingSummaryService {
     productIds: number[],
     productMap: Map<number, Product>,
     adaptionMap: Map<number, ProductAdaption>,
-    quantityByProduct: Map<number, number>,
+    productAggregates: {
+      quantities: Map<number, number>;
+      orderCounts: Map<number, number>;
+      detailsByOrderId: Map<number, OrderDetailLine[]>;
+      codeToProductId: Map<string, number>;
+    },
+    orders: Order[],
     adsAttribution: {
       adsSpendByProduct: Map<number, number>;
       campaignGroups: Map<
@@ -789,7 +936,10 @@ export class MarketingSummaryService {
         group,
         productMap,
         adaptionMap,
-        quantityByProduct,
+        productAggregates.quantities,
+        orders,
+        productAggregates.detailsByOrderId,
+        productAggregates.codeToProductId,
       );
       if (row) {
         rows.push(row);
@@ -804,7 +954,8 @@ export class MarketingSummaryService {
         pid,
         productMap,
         adaptionMap,
-        quantityByProduct,
+        productAggregates.quantities,
+        productAggregates.orderCounts,
         adsAttribution.adsSpendByProduct,
       );
       if (row) {
@@ -818,6 +969,7 @@ export class MarketingSummaryService {
   private computeTotals(
     rows: MarketingSummaryProductRow[],
     unmatched: MarketingSummaryUnmatched,
+    confirmedOrderCount: number,
   ): MarketingSummaryTotals {
     const sumKey = (
       key: keyof Pick<
@@ -846,6 +998,7 @@ export class MarketingSummaryService {
 
     return {
       total_quantity: sumKey('total_quantity'),
+      total_orders: confirmedOrderCount,
       ads_spend: adsSpend,
       tax_ads: taxAds,
       revenue: sumKey('revenue'),

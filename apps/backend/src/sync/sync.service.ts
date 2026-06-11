@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -16,6 +17,7 @@ import { Customer } from '../users/customer.entity';
 import { ProductAdaption } from '../products/product-adaption.entity';
 import { Order } from '../orders/order.entity';
 import { OrderDetail } from '../orders/order-detail.entity';
+import { resolveOrderStatusFromPushSale } from '../orders/order-status.util';
 import {
   PushSaleTypeDate,
   SyncStatus,
@@ -101,6 +103,8 @@ interface PushSaleOrderPayload {
   totalShippingCost?: number;
   totalCod?: number;
   reasonToCreate?: string;
+  orderStatusName?: string;
+  operationResultName?: string;
   orderConfirmDate?: string | Date;
   createTime?: string | Date;
   updateTime?: string | Date;
@@ -178,24 +182,22 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Runs once at boot. If the previous calendar day in APP_TIMEZONE has no
-   * successful sync_log row, triggers a sync for that day. Older missed days
+   * completed sync_log row, triggers a sync for that day. Older missed days
    * still need to be re-synced manually via POST /sync/orders.
    */
   private async catchUpMissedDailySync(): Promise<void> {
     try {
       const yesterday = yesterdayCalendarInZone(getAppTimeZone());
-      const lastSuccess = await this.syncLogRepo.findOne({
-        where: { sync_date: yesterday, status: SyncStatus.Success },
-        order: { id: 'DESC' },
-      });
-      if (lastSuccess) {
+      const completed =
+        await this.syncLogRepo.findCompletedOrderSyncForDate(yesterday);
+      if (completed) {
         this.logger.log(
-          `Startup catch-up: sync for ${yesterday} already succeeded (sync_log #${lastSuccess.id}); nothing to do.`,
+          `Startup catch-up: sync for ${yesterday} already completed (sync_log #${completed.id}); nothing to do.`,
         );
         return;
       }
       this.logger.warn(
-        `Startup catch-up: no successful sync for ${yesterday}; triggering sync now.`,
+        `Startup catch-up: no completed sync_log for ${yesterday}; triggering sync now.`,
       );
       this.syncOrdersFromPushSale(yesterday, 1, SyncTriggerSource.Cron);
     } catch (err) {
@@ -206,12 +208,144 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getSyncLogs(page: number = 1, limit: number = 10) {
-    const [data, total] = await this.syncLogRepo.findAndCount({
-      order: { created_at: 'DESC' },
-      take: limit,
-      skip: (page - 1) * limit,
+    const take = Math.min(Math.max(Number(limit) || 10, 1), 100);
+    const skip = (Math.max(Number(page) || 1, 1) - 1) * take;
+
+    const qb = this.syncLogRepo
+      .createQueryBuilder('log')
+      .select('log.id', 'id')
+      .addSelect('log.created_at', 'created_at')
+      .addSelect('log.updated_at', 'updated_at')
+      .addSelect('log.sync_date', 'sync_date')
+      .addSelect('log.trigger_source', 'trigger_source')
+      .addSelect('log.status', 'status')
+      .addSelect('log.error_details', 'error_details')
+      .addSelect('log.synced_count', 'synced_count')
+      .addSelect('log.page_no', 'page_no')
+      .addSelect('log.data', 'data')
+      .addSelect(
+        `CASE WHEN log.page_no IS NOT NULL AND log.response IS NOT NULL AND CHAR_LENGTH(log.response) > 0 THEN 1 ELSE 0 END`,
+        'has_response',
+      )
+      .orderBy('log.created_at', 'DESC')
+      .offset(skip)
+      .limit(take);
+
+    const [rawRows, total] = await Promise.all([
+      qb.getRawMany<Record<string, unknown>>(),
+      this.syncLogRepo.count(),
+    ]);
+
+    const data = rawRows.map((row) => ({
+      id: Number(row.id),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      sync_date: row.sync_date,
+      trigger_source: row.trigger_source,
+      status: row.status,
+      error_details: row.error_details ?? null,
+      synced_count: Number(row.synced_count ?? 0),
+      page_no:
+        row.page_no != null && row.page_no !== '' ? Number(row.page_no) : null,
+      data: row.data ?? null,
+      has_response:
+        row.has_response === 1 ||
+        row.has_response === '1' ||
+        row.has_response === true,
+    }));
+
+    return { data, total, page: Math.max(Number(page) || 1, 1), limit: take };
+  }
+
+  /** Re-fetch one PushSale page and update the existing sync_log row. */
+  async resyncSyncLogPage(logId: number) {
+    const log = await this.syncLogRepo.findOne({ where: { id: logId } });
+    if (!log) {
+      throw new BadRequestException(`Sync log #${logId} not found`);
+    }
+    if (log.page_no == null || log.page_no <= 0 || !log.response?.trim()) {
+      throw new BadRequestException(
+        'This sync log has no page_no/response; re-sync is not available.',
+      );
+    }
+
+    if (this.isSyncRunning) {
+      return {
+        status: 'skipped',
+        message: 'Another PushSale sync is already in progress.',
+      };
+    }
+
+    this.isSyncRunning = true;
+    try {
+      const defaultPassword = await bcrypt.hash(
+        process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!',
+        10,
+      );
+      const result = await this.fetchAndProcessPage({
+        dateStr: log.sync_date,
+        pageIndex: log.page_no,
+        triggerSource: SyncTriggerSource.Api,
+        defaultPasswordHash: defaultPassword,
+        existingLogId: logId,
+      });
+      return {
+        status: 'success',
+        ...result,
+      };
+    } finally {
+      this.isSyncRunning = false;
+    }
+  }
+
+  /** Re-process orders from the saved PushSale response (no API call). */
+  async replaySyncLog(logId: number) {
+    const log = await this.syncLogRepo.findOne({
+      where: { id: logId },
+      select: ['id', 'page_no', 'response', 'status', 'sync_date'],
     });
-    return { data, total, page: Number(page), limit: Number(limit) };
+    if (!log) {
+      throw new BadRequestException(`Sync log #${logId} not found`);
+    }
+    if (log.page_no == null || log.page_no <= 0 || !log.response?.trim()) {
+      throw new BadRequestException(
+        'This sync log has no page_no/response; replay is not available.',
+      );
+    }
+
+    let body: PushSaleGetOrderResponseBody;
+    try {
+      body = JSON.parse(log.response) as PushSaleGetOrderResponseBody;
+    } catch {
+      throw new BadRequestException('Saved response is not valid JSON.');
+    }
+
+    const defaultPassword = await bcrypt.hash(
+      process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!',
+      10,
+    );
+    const results = body.result ?? [];
+    let syncedCount = 0;
+    for (const orderData of results) {
+      await this.processOrder(
+        orderData as PushSaleOrderPayload,
+        defaultPassword,
+      );
+      syncedCount++;
+    }
+
+    await this.syncLogRepo.updateById(logId, {
+      status: SyncStatus.Success,
+      synced_count: syncedCount,
+      error_details: null,
+    });
+
+    return {
+      status: 'success',
+      sync_log_id: logId,
+      synced_count: syncedCount,
+      records: results.length,
+    };
   }
 
   private sleepMs(ms: number): Promise<void> {
@@ -268,176 +402,196 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     pageBegin: number = 1,
     triggerSource: SyncTriggerSource = SyncTriggerSource.Api,
   ) {
-    const clientId = process.env.PUSHSALE_CLIENT_ID || '5662';
-    const apiToken = process.env.PUSHSALE_API_TOKEN || '';
-    const apiUrl =
-      process.env.PUSHSALE_API_URL || 'https://pushsale.vn/v1/getdata';
     const defaultPassword = await bcrypt.hash(
       process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!',
       10,
     );
 
-    const syncLogData: Record<string, unknown> = {
-      sync_date: dateStr,
-      pageBegin,
-    };
-
-    const syncLog = await this.syncLogRepo.createRow({
-      sync_date: dateStr,
-      trigger_source: triggerSource,
-      status: SyncStatus.Processing,
-      synced_count: 0,
-      data: cloneSyncLogData(syncLogData),
-    });
-    const logId = syncLog.id;
-
-    const fromDate = `${dateStr} 00:00:00.001`;
-    const toDate = `${dateStr} 23:59:59.001`;
-
     let pageIndex = pageBegin;
     let hasMore = true;
     let totalSynced = 0;
-    const typeDate = PushSaleTypeDate.CreatedDate;
+    const syncPagesRunStartedAt = Date.now();
 
-    let syncPagesRunStartedAt = 0;
     try {
-      syncPagesRunStartedAt = Date.now();
       while (hasMore) {
-        const currentPage = pageIndex;
-        const pageHandledStartedAt = Date.now();
-        this.logger.log(`Fetching page ${currentPage} for date ${dateStr}`);
-
-        const secureToken = crypto
-          .createHash('md5')
-          .update(`${apiToken}_${pageIndex}_${typeDate}`)
-          .digest('hex');
-
-        // Per-page retry loop: re-issues the same request when PushSale returns
-        // a retryable body-level errorCode (e.g. "time_limit") in addition to
-        // the transport-level retries handled inside postJsonWithRetry.
-        let results: unknown[] | undefined;
-        let pageRequestStartedAt = 0;
-        for (;;) {
-          try {
-            const attempt =
-              await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
-                `${apiUrl}/GetOrderByConditions`,
-                {
-                  clientId,
-                  secureToken,
-                  pageIndex,
-                  pageSize: 100,
-                  fromDate,
-                  toDate,
-                  typeDate,
-                  isIncludeDetail: 1,
-                },
-                PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
-              );
-            pageRequestStartedAt = attempt.requestStartedAt;
-
-            const httpDur = durationPartsFromMs(attempt.durationMs);
-            this.logger.log(
-              `GetOrderByConditions for ${dateStr} page ${currentPage}: HTTP round-trip ${httpDur.ms} ms (${httpDur.sec} s)`,
-            );
-
-            const resData = attempt.response.data;
-            if (resData && resData.successful === false) {
-              throw new Error(`${resData.errorCode}: ${resData.errorMessage}`);
-            }
-            results = resData?.result;
-            break;
-          } catch (err) {
-            if (!isRetryableHttpError(err, PUSHSALE_RETRYABLE_ERROR_SNIPPETS)) {
-              throw err;
-            }
-            this.logger.warn(
-              `Page ${currentPage} for ${dateStr} retryable error: ${httpErrorMessage(err)}. Waiting ${PUSHSALE_REQUEST_INTERVAL_MS} ms before retry.`,
-            );
-            await this.sleepMs(PUSHSALE_REQUEST_INTERVAL_MS);
-          }
-        }
-
-        if (!results || results.length === 0) {
-          const pageDur = durationPartsSince(pageHandledStartedAt);
-          this.logger.log(
-            `PushSale page ${currentPage} for ${dateStr} handled in ${pageDur.ms} ms (${pageDur.sec} s); 0 orders (empty response).`,
-          );
-          syncLogData[`page_${currentPage}`] = {
-            status: 'empty',
-            records: 0,
-            total_ms: pageDur.ms,
-          };
-          hasMore = false;
-          break;
-        }
-
-        for (const orderData of results) {
-          await this.processOrder(
-            orderData as PushSaleOrderPayload,
-            defaultPassword,
-          );
-          totalSynced++;
-        }
-
+        const result = await this.fetchAndProcessPage({
+          dateStr,
+          pageIndex,
+          triggerSource,
+          defaultPasswordHash: defaultPassword,
+        });
+        totalSynced += result.records;
+        hasMore = result.hasMore;
         pageIndex++;
 
-        if (results.length < 100) {
-          hasMore = false;
-        }
-
         if (hasMore) {
-          const elapsedSincePageRequest = Date.now() - pageRequestStartedAt;
-          const remainingInterval =
-            PUSHSALE_REQUEST_INTERVAL_MS - elapsedSincePageRequest;
-          if (remainingInterval > 0) {
-            this.logger.log(`Pacing before next page: ${remainingInterval} ms`);
-
-            await this.sleepMs(remainingInterval);
+          const remaining =
+            PUSHSALE_REQUEST_INTERVAL_MS - result.page_duration_ms;
+          if (remaining > 0) {
+            this.logger.log(`Pacing before next page: ${remaining} ms`);
+            await this.sleepMs(remaining);
           }
         }
-
-        const pageDur = durationPartsSince(pageHandledStartedAt);
-        syncLogData[`page_${currentPage}`] = {
-          status: 'success',
-          records: results.length,
-          total_ms: pageDur.ms,
-        };
-        await this.syncLogRepo.updateById(logId, {
-          synced_count: totalSynced,
-          data: cloneSyncLogData(syncLogData),
-        });
-        this.logger.log(
-          `PushSale page ${currentPage} for ${dateStr} handled in ${pageDur.ms} ms (${pageDur.sec} s); ${results.length} orders${hasMore ? '; pacing before next page included' : ''}.`,
-        );
       }
-
-      await this.syncLogRepo.updateById(logId, {
-        status: SyncStatus.Success,
-        synced_count: totalSynced,
-        data: cloneSyncLogData(syncLogData),
-      });
 
       const runDur = durationPartsSince(syncPagesRunStartedAt);
       this.logger.log(
-        `PushSale sync pages for ${dateStr} finished (success or empty) in ${runDur.ms} ms (${runDur.sec} s); ${totalSynced} orders synced.`,
+        `PushSale sync pages for ${dateStr} finished in ${runDur.ms} ms (${runDur.sec} s); ${totalSynced} orders synced.`,
       );
     } catch (error) {
       const runDur = durationPartsSince(syncPagesRunStartedAt);
       this.logger.error(
         `PushSale sync pages for ${dateStr} failed after ${runDur.ms} ms (${runDur.sec} s): ${httpErrorMessage(error)}`,
       );
+      throw error;
+    }
+  }
 
-      syncLogData['error'] = {
-        current_page: pageIndex,
-        message: httpErrorMessage(error),
-        total_ms: runDur.ms,
+  private async fetchAndProcessPage(params: {
+    dateStr: string;
+    pageIndex: number;
+    triggerSource: SyncTriggerSource;
+    defaultPasswordHash: string;
+    existingLogId?: number;
+  }): Promise<{
+    records: number;
+    hasMore: boolean;
+    sync_log_id: number;
+    page_duration_ms: number;
+  }> {
+    const { dateStr, pageIndex, triggerSource, defaultPasswordHash } = params;
+    const clientId = process.env.PUSHSALE_CLIENT_ID || '5662';
+    const apiToken = process.env.PUSHSALE_API_TOKEN || '';
+    const apiUrl =
+      process.env.PUSHSALE_API_URL || 'https://pushsale.vn/v1/getdata';
+    const typeDate = PushSaleTypeDate.CreatedDate;
+    const fromDate = `${dateStr} 00:00:00.001`;
+    const toDate = `${dateStr} 23:59:59.001`;
+
+    const pageHandledStartedAt = Date.now();
+    let logId = params.existingLogId;
+
+    if (logId == null) {
+      const pageLog = await this.syncLogRepo.createRow({
+        sync_date: dateStr,
+        page_no: pageIndex,
+        trigger_source: triggerSource,
+        status: SyncStatus.Processing,
+        synced_count: 0,
+        response: null,
+        data: null,
+      });
+      logId = pageLog.id;
+    } else {
+      await this.syncLogRepo.updateById(logId, {
+        status: SyncStatus.Processing,
+        error_details: null,
+      });
+    }
+
+    this.logger.log(`Fetching page ${pageIndex} for date ${dateStr}`);
+
+    const secureToken = crypto
+      .createHash('md5')
+      .update(`${apiToken}_${pageIndex}_${typeDate}`)
+      .digest('hex');
+
+    const requestBody = {
+      clientId,
+      secureToken,
+      pageIndex,
+      pageSize: 100,
+      fromDate,
+      toDate,
+      typeDate,
+      isIncludeDetail: 1,
+    };
+
+    let lastResponseBody: PushSaleGetOrderResponseBody | undefined;
+    try {
+      for (;;) {
+        try {
+          const attempt =
+            await this.httpRetryService.postJsonWithRetry<PushSaleGetOrderResponseBody>(
+              `${apiUrl}/GetOrderByConditions`,
+              requestBody,
+              PUSHSALE_RETRYABLE_ERROR_SNIPPETS,
+            );
+
+          const httpDur = durationPartsFromMs(attempt.durationMs);
+          this.logger.log(
+            `GetOrderByConditions for ${dateStr} page ${pageIndex}: HTTP round-trip ${httpDur.ms} ms (${httpDur.sec} s)`,
+          );
+
+          const resData = attempt.response.data;
+          if (resData && resData.successful === false) {
+            throw new Error(`${resData.errorCode}: ${resData.errorMessage}`);
+          }
+          lastResponseBody = resData;
+          break;
+        } catch (err) {
+          if (!isRetryableHttpError(err, PUSHSALE_RETRYABLE_ERROR_SNIPPETS)) {
+            throw err;
+          }
+          this.logger.warn(
+            `Page ${pageIndex} for ${dateStr} retryable error: ${httpErrorMessage(err)}. Waiting ${PUSHSALE_REQUEST_INTERVAL_MS} ms before retry.`,
+          );
+          await this.sleepMs(PUSHSALE_REQUEST_INTERVAL_MS);
+        }
+      }
+
+      const responseJson = JSON.stringify(lastResponseBody ?? null);
+      const results = lastResponseBody?.result ?? [];
+      let syncedCount = 0;
+
+      for (const orderData of results) {
+        await this.processOrder(
+          orderData as PushSaleOrderPayload,
+          defaultPasswordHash,
+        );
+        syncedCount++;
+      }
+
+      const pageDur = durationPartsSince(pageHandledStartedAt);
+
+      await this.syncLogRepo.updateById(logId, {
+        status: SyncStatus.Success,
+        synced_count: syncedCount,
+        response: responseJson,
+        data: cloneSyncLogData({
+          records: results.length,
+          total_ms: pageDur.ms,
+          request: requestBody,
+        }),
+        error_details: null,
+      });
+
+      this.logger.log(
+        `PushSale page ${pageIndex} for ${dateStr} handled in ${pageDur.ms} ms (${pageDur.sec} s); ${results.length} orders.`,
+      );
+
+      return {
+        records: results.length,
+        hasMore: results.length >= 100,
+        sync_log_id: logId,
+        page_duration_ms: pageDur.ms,
       };
+    } catch (error) {
+      const pageDur = durationPartsSince(pageHandledStartedAt);
+      const responseJson =
+        lastResponseBody != null ? JSON.stringify(lastResponseBody) : undefined;
+
       await this.syncLogRepo.updateById(logId, {
         status: SyncStatus.Failed,
         error_details: httpErrorMessage(error),
-        data: cloneSyncLogData(syncLogData),
+        ...(responseJson ? { response: responseJson } : {}),
+        data: cloneSyncLogData({
+          total_ms: pageDur.ms,
+          request: requestBody,
+          error: httpErrorMessage(error),
+        }),
       });
+      throw error;
     }
   }
 
@@ -481,6 +635,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
     const productIds: number[] = [];
     const adaptionIds: number[] = [];
+    const itemCodes: string[] = [];
     const tz = getAppTimeZone();
     const { startStr, endStr, todayStr } = calendarMonthBoundsForDate(
       new Date(),
@@ -493,6 +648,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       if (!detail.itemCode) {
         continue;
       }
+
+      itemCodes.push(detail.itemCode.trim());
 
       let product = await this.productRepo.findOne({
         where: { item_code: detail.itemCode },
@@ -539,6 +696,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       sale_user: sale_user_id != null ? { id: sale_user_id } : null,
       product_adaption_ids: adaptionIds,
       product_ids: productIds,
+      item_codes: itemCodes,
       total_quantity: data.totalQuantity || 0,
       total_amount: data.totalAmount || 0,
       total_price: data.totalPrice || 0,
@@ -547,6 +705,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       total_shipping_cost: data.totalShippingCost || 0,
       total_cod: data.totalCod || 0,
       reason_create: data.reasonToCreate,
+      status: resolveOrderStatusFromPushSale(data.orderStatusName) ?? null,
+      status_name: data.orderStatusName?.trim() || null,
+      operation_result_name: data.operationResultName?.trim() || null,
       confirm_time: optionalDateTimeString(data.orderConfirmDate),
       created_time: optionalDateTimeString(data.createTime),
       updated_time: optionalDateTimeString(data.updateTime),
