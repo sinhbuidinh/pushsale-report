@@ -18,6 +18,8 @@ export type SpendBucket = {
   spend: number;
   matchedAdsCount: number;
   unmatchedAdsCount: number;
+  /** Distinct Meta campaign names for ads in the unmatched bucket. */
+  unmatchedCampaignNames: string[];
 };
 
 export interface SpendAggregateInsight {
@@ -47,6 +49,25 @@ function buildCampaignGroupKey(matchers: ProductMatcher[]): string {
     .map((matcher) => matcher.matchToken)
     .sort()
     .join(CAMPAIGN_NAME_PIPE_SEPARATOR);
+}
+
+function trackUnmatchedCampaignName(
+  bucket: SpendBucket,
+  campaignName: string | undefined,
+): void {
+  const normalized = (campaignName ?? '').trim() || '(blank campaign name)';
+  if (!bucket.unmatchedCampaignNames.includes(normalized)) {
+    bucket.unmatchedCampaignNames.push(normalized);
+  }
+}
+
+export function formatUnmatchedCampaignNotes(
+  campaignNames: string[],
+): string | null {
+  if (campaignNames.length === 0) {
+    return null;
+  }
+  return JSON.stringify([...campaignNames].sort((a, b) => a.localeCompare(b)));
 }
 
 export function aggregateSpendByProduct(
@@ -81,6 +102,7 @@ export function aggregateSpendByProduct(
         spend: 0,
         matchedAdsCount: 0,
         unmatchedAdsCount: 0,
+        unmatchedCampaignNames: [],
       };
     } else if (matchedMatchers.length === 1) {
       const matched = matchedMatchers[0];
@@ -93,6 +115,7 @@ export function aggregateSpendByProduct(
         spend: 0,
         matchedAdsCount: 0,
         unmatchedAdsCount: 0,
+        unmatchedCampaignNames: [],
       };
     } else {
       const campaignGroupKey = buildCampaignGroupKey(matchedMatchers);
@@ -107,6 +130,7 @@ export function aggregateSpendByProduct(
         spend: 0,
         matchedAdsCount: 0,
         unmatchedAdsCount: 0,
+        unmatchedCampaignNames: [],
       };
     }
 
@@ -117,6 +141,7 @@ export function aggregateSpendByProduct(
       bucket.matchedAdsCount += 1;
     } else {
       bucket.unmatchedAdsCount += 1;
+      trackUnmatchedCampaignName(bucket, row.campaign_name);
     }
     grouped.set(bucketKey, bucket);
   }
