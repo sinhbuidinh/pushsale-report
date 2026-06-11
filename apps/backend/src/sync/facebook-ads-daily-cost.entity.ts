@@ -39,6 +39,14 @@ export class FacebookAdsDailyCost {
   @Column({ type: 'varchar', length: 255, nullable: true })
   product_code: string | null;
 
+  /** Member product IDs when spend is attributed to a multi-item_code campaign group. */
+  @Column({ type: 'simple-array', nullable: true })
+  product_ids: number[] | null;
+
+  /** Normalized sorted item_code key for multi-product campaign groups. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  campaign_group_key: string | null;
+
   @Column({ type: 'decimal', precision: 15, scale: 2, default: 0 })
   spend: number;
 

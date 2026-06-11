@@ -46,8 +46,19 @@ interface OrderFilterUsersResponse {
   sale: OrderFilterUser[];
 }
 
+interface MarketingSummaryMemberUnitPrice {
+  item_code: string;
+  selling_price: number;
+  cost_price: number;
+  delivery_fee_per_unit: number;
+}
+
 interface MarketingSummaryRow {
-  product_id: number;
+  row_kind: 'product' | 'group';
+  row_key: string;
+  product_id: number | null;
+  product_ids: number[];
+  campaign_group_key: string | null;
   item_code: string;
   item_name: string;
   total_quantity: number;
@@ -55,6 +66,7 @@ interface MarketingSummaryRow {
   cost_price: number;
   delivery_fee_per_unit: number;
   tax_value_pct: number;
+  member_unit_prices: MarketingSummaryMemberUnitPrice[] | null;
   ads_spend: number;
   tax_ads: number;
   revenue: number;
@@ -389,6 +401,11 @@ interface MetricDef {
    * e.g. the VAT % used to compute the row. Returning `null` hides it.
    */
   cellAnnotation?: (row: MarketingSummaryRow) => string | null;
+  /**
+   * Optional multi-line cell text for campaign group rows. When returned,
+   * replaces the default numeric rendering for that cell.
+   */
+  cellText?: (row: MarketingSummaryRow) => string | null;
 }
 
 /**
@@ -560,6 +577,17 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
       total: (t) => t.revenue_estimate,
     },
     {
+      key: 'actual_revenue',
+      label: 'Doanh số thực',
+      tooltip:
+        'Tổng doanh thu theo số lượng × giá bán từng size (không nhân 0,8).',
+      format: 'number',
+      emphasize: true,
+      value: (r) => r.revenue,
+      unmatched: () => null,
+      total: (t) => t.revenue,
+    },
+    {
       key: 'revenue_tax',
       label: 'Thuế Doanh số',
       format: 'number',
@@ -580,6 +608,7 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
         format: 'number',
         tooltip: 'Giá bán cho một đơn vị sản phẩm.',
         value: (r) => r.selling_price,
+        cellText: (r) => formatMemberUnitPriceList(r, 'selling_price'),
         unmatched: () => null,
         total: () => null,
       },
@@ -598,6 +627,7 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
         tooltip:
           'Giá vốn cho một sản phẩm (Giá có thể thay đổi theo tháng).',
         value: (r) => r.cost_price,
+        cellText: (r) => formatMemberUnitPriceList(r, 'cost_price'),
         unmatched: () => null,
         total: () => null,
       },
@@ -640,6 +670,7 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
       format: 'number',
       tooltip: 'Phí vận chuyển tính trên mỗi đơn vị sản phẩm.',
       value: (r) => r.delivery_fee_per_unit,
+      cellText: (r) => formatMemberUnitPriceList(r, 'delivery_fee_per_unit'),
       unmatched: () => null,
       total: () => null,
     });
@@ -728,6 +759,46 @@ const renderValue = (
   if (format === 'percent') return fmtPct(v);
   if (format === 'ratio') return fmtRatio(v);
   return fmtNum(v);
+};
+
+type MemberUnitPriceField =
+  | 'selling_price'
+  | 'cost_price'
+  | 'delivery_fee_per_unit';
+
+const formatMemberUnitPriceList = (
+  row: MarketingSummaryRow,
+  field: MemberUnitPriceField,
+): string | null => {
+  if (row.row_kind !== 'group' || !row.member_unit_prices?.length) {
+    return null;
+  }
+  return row.member_unit_prices
+    .map((member) => `${member.item_code}: ${fmtNum(member[field])}`)
+    .join('\n');
+};
+
+const renderMetricCell = (
+  row: MarketingSummaryRow,
+  metric: MetricDef,
+): React.ReactNode => {
+  const customText = metric.cellText?.(row);
+  if (customText != null) {
+    return (
+      <Typography
+        component="span"
+        sx={{
+          whiteSpace: 'pre-line',
+          display: 'inline-block',
+          textAlign: 'right',
+          fontSize: 'inherit',
+        }}
+      >
+        {customText}
+      </Typography>
+    );
+  }
+  return renderValue(metric.value(row), metric.format);
 };
 
 const STICKY_COL_WIDTH = 220;
@@ -1532,7 +1603,7 @@ const MarketingSummaryPage: React.FC = () => {
                   <StickyHeadCell>Chỉ số</StickyHeadCell>
                   {singleData.rows.map((row) => (
                     <TableCell
-                      key={row.product_id}
+                      key={row.row_key}
                       align="right"
                       sx={{
                         fontWeight: 700,
@@ -1693,11 +1764,11 @@ const MarketingSummaryPage: React.FC = () => {
                         }
                         return (
                           <TableCell
-                            key={row.product_id}
+                            key={row.row_key}
                             align="right"
                             sx={withRowHighlight(metric.key, sx)}
                           >
-                            {renderValue(v, metric.format)}
+                            {renderMetricCell(row, metric)}
                             {metric.cellAnnotation &&
                               (() => {
                                 const note = metric.cellAnnotation!(row);

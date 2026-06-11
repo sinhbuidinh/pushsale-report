@@ -8,6 +8,7 @@ import { ProductAdaption } from '../products/product-adaption.entity';
 import { AdsAccount } from '../users/ads-account.entity';
 import { User } from '../users/user.entity';
 import { FacebookAdsDailyCost } from '../sync/facebook-ads-daily-cost.entity';
+import { formatGroupProductCodeForDisplay } from '../sync/facebook-ads-campaign-name.util';
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -23,8 +24,20 @@ export interface MarketingSummaryQuery {
   end_date: string;
 }
 
+export interface MarketingSummaryMemberUnitPrice {
+  item_code: string;
+  selling_price: number;
+  cost_price: number;
+  delivery_fee_per_unit: number;
+}
+
 export interface MarketingSummaryProductRow {
-  product_id: number;
+  row_kind: 'product' | 'group';
+  /** Stable identifier for UI keys: `product:{id}` or `group:{campaign_group_key}`. */
+  row_key: string;
+  product_id: number | null;
+  product_ids: number[];
+  campaign_group_key: string | null;
   item_code: string;
   item_name: string;
   /** Total units of this product across the matched orders. */
@@ -51,6 +64,8 @@ export interface MarketingSummaryProductRow {
   risk_fee: number;
   /** total_quantity * delivery_fee_per_unit. */
   total_delivery_fee: number;
+  /** Per-size unit prices for campaign group rows (null for single-product rows). */
+  member_unit_prices: MarketingSummaryMemberUnitPrice[] | null;
   /** ads_spend / revenue_estimate * 100. Null when revenue_estimate is 0. */
   ads_per_revenue_pct: number | null;
   /** revenue_estimate - revenue_tax - total_cost_est - risk_fee - total_delivery_fee - tax_ads. */
@@ -163,21 +178,29 @@ export class MarketingSummaryService {
     const adsAccountIds = adsAccounts.map((a) => a.ad_account_id);
 
     const productIds = Array.from(totalProductQuantity.keys());
-    const adsSpendByProduct = await this.computeAdsSpend(
-      productIds,
+    const adsAttribution = await this.loadAdsAttribution(
       adsAccountIds,
       start_date,
       end_date,
     );
-    const productMap = await this.fetchProducts(productIds);
-    const adaptionMap = await this.fetchActiveAdaptions(productIds, end_date);
+    const allProductIds = new Set(productIds);
+    for (const group of adsAttribution.campaignGroups.values()) {
+      for (const pid of group.productIds) {
+        allProductIds.add(pid);
+      }
+    }
+    const productMap = await this.fetchProducts([...allProductIds]);
+    const adaptionMap = await this.fetchActiveAdaptions(
+      [...allProductIds],
+      end_date,
+    );
 
     const rows = this.buildRows(
       productIds,
       productMap,
       adaptionMap,
       totalProductQuantity,
-      adsSpendByProduct,
+      adsAttribution,
     );
 
     rows.sort((a, b) => b.revenue_estimate - a.revenue_estimate);
@@ -380,6 +403,7 @@ export class MarketingSummaryService {
       .select('COALESCE(SUM(c.spend), 0)', 'total')
       .where('c.ad_account_id IN (:...aids)', { aids: adsAccountIds })
       .andWhere('c.product_id IS NULL')
+      .andWhere('c.campaign_group_key IS NULL')
       .andWhere('c.sync_date BETWEEN :startDate AND :endDate', {
         startDate,
         endDate,
@@ -392,33 +416,79 @@ export class MarketingSummaryService {
     };
   }
 
-  private async computeAdsSpend(
-    productIds: number[],
+  private async loadAdsAttribution(
     adsAccountIds: string[],
     startDate: string,
     endDate: string,
-  ): Promise<Map<number, number>> {
-    const spend = new Map<number, number>();
-    if (productIds.length === 0 || adsAccountIds.length === 0) {
-      return spend;
+  ): Promise<{
+    adsSpendByProduct: Map<number, number>;
+    campaignGroups: Map<
+      string,
+      {
+        campaignGroupKey: string;
+        productIds: number[];
+        itemCode: string;
+        adsSpend: number;
+      }
+    >;
+    productIdToGroupKey: Map<number, string>;
+  }> {
+    const adsSpendByProduct = new Map<number, number>();
+    const campaignGroups = new Map<
+      string,
+      {
+        campaignGroupKey: string;
+        productIds: number[];
+        itemCode: string;
+        adsSpend: number;
+      }
+    >();
+    const productIdToGroupKey = new Map<number, string>();
+
+    if (adsAccountIds.length === 0) {
+      return { adsSpendByProduct, campaignGroups, productIdToGroupKey };
     }
 
     const costs = await this.dailyCostRepo
       .createQueryBuilder('c')
       .where('c.ad_account_id IN (:...aids)', { aids: adsAccountIds })
-      .andWhere('c.product_id IN (:...pids)', { pids: productIds })
       .andWhere('c.sync_date BETWEEN :startDate AND :endDate', {
         startDate,
         endDate,
       })
       .getMany();
 
-    for (const c of costs) {
-      if (c.product_id == null) continue;
-      const prev = spend.get(c.product_id) ?? 0;
-      spend.set(c.product_id, prev + Number(c.spend || 0));
+    for (const cost of costs) {
+      const spendAmount = Number(cost.spend || 0);
+      if (cost.campaign_group_key) {
+        const groupKey = cost.campaign_group_key;
+        const memberIds = (cost.product_ids || [])
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0);
+        const existing = campaignGroups.get(groupKey);
+        if (existing) {
+          existing.adsSpend += spendAmount;
+        } else {
+          campaignGroups.set(groupKey, {
+            campaignGroupKey: groupKey,
+            productIds: memberIds,
+            itemCode: cost.product_code || groupKey,
+            adsSpend: spendAmount,
+          });
+        }
+        for (const pid of memberIds) {
+          productIdToGroupKey.set(pid, groupKey);
+        }
+        continue;
+      }
+
+      if (cost.product_id != null) {
+        const prev = adsSpendByProduct.get(cost.product_id) ?? 0;
+        adsSpendByProduct.set(cost.product_id, prev + spendAmount);
+      }
     }
-    return spend;
+
+    return { adsSpendByProduct, campaignGroups, productIdToGroupKey };
   }
 
   private async fetchProducts(
@@ -460,21 +530,166 @@ export class MarketingSummaryService {
     return map;
   }
 
-  private buildRows(
-    productIds: number[],
+  private buildMetricRow(input: {
+    row_kind: 'product' | 'group';
+    row_key: string;
+    product_id: number | null;
+    product_ids: number[];
+    campaign_group_key: string | null;
+    item_code: string;
+    item_name: string;
+    total_quantity: number;
+    selling_price: number;
+    cost_price: number;
+    delivery_fee_per_unit: number;
+    tax_value_pct: number;
+    ads_spend: number;
+    revenue: number;
+    revenue_estimate: number;
+    revenue_tax: number;
+    total_cost: number;
+    total_cost_est: number;
+    risk_fee: number;
+    total_delivery_fee: number;
+    member_unit_prices: MarketingSummaryMemberUnitPrice[] | null;
+  }): MarketingSummaryProductRow {
+    const taxAds = input.ads_spend * ADS_TAX_RATE;
+    const profit =
+      input.revenue_estimate -
+      (input.revenue_tax +
+        taxAds +
+        input.total_cost_est +
+        input.risk_fee +
+        input.total_delivery_fee);
+    const adsPerRevenuePct =
+      input.revenue_estimate > 0
+        ? (input.ads_spend / input.revenue_estimate) * 100
+        : null;
+    const profitPerRevenuePct =
+      input.revenue_estimate > 0
+        ? (profit / input.revenue_estimate) * 100
+        : null;
+
+    return {
+      row_kind: input.row_kind,
+      row_key: input.row_key,
+      product_id: input.product_id,
+      product_ids: input.product_ids,
+      campaign_group_key: input.campaign_group_key,
+      item_code: input.item_code,
+      item_name: input.item_name,
+      total_quantity: input.total_quantity,
+      selling_price: input.selling_price,
+      cost_price: input.cost_price,
+      delivery_fee_per_unit: input.delivery_fee_per_unit,
+      tax_value_pct: input.tax_value_pct,
+      ads_spend: input.ads_spend,
+      tax_ads: taxAds,
+      revenue: input.revenue,
+      revenue_estimate: input.revenue_estimate,
+      revenue_tax: input.revenue_tax,
+      total_cost: input.total_cost,
+      total_cost_est: input.total_cost_est,
+      risk_fee: input.risk_fee,
+      total_delivery_fee: input.total_delivery_fee,
+      member_unit_prices: input.member_unit_prices,
+      ads_per_revenue_pct: adsPerRevenuePct,
+      profit,
+      profit_per_revenue_pct: profitPerRevenuePct,
+    };
+  }
+
+  private buildProductRow(
+    pid: number,
     productMap: Map<number, Product>,
     adaptionMap: Map<number, ProductAdaption>,
     quantityByProduct: Map<number, number>,
     adsSpendByProduct: Map<number, number>,
-  ): MarketingSummaryProductRow[] {
-    const rows: MarketingSummaryProductRow[] = [];
-    for (const pid of productIds) {
+  ): MarketingSummaryProductRow | null {
+    const product = productMap.get(pid);
+    if (!product) {
+      return null;
+    }
+    const adaption = adaptionMap.get(pid);
+    const sellingPrice = Number(
+      adaption?.selling_price ?? product.selling_price ?? 0,
+    );
+    const costPrice = Number(adaption?.cost_price ?? product.cost_price ?? 0);
+    const deliveryFeePerUnit = Number(
+      adaption?.delivery_fee ?? product.delivery_fee ?? 0,
+    );
+    const taxValuePct = Number(product.tax_value || 0);
+    const qty = quantityByProduct.get(pid) ?? 0;
+    const adsSpend = adsSpendByProduct.get(pid) ?? 0;
+    const revenue = qty * sellingPrice;
+    const revenueEstimate = revenue * REVENUE_RETURN_FACTOR;
+    const revenueTax = revenueEstimate * (taxValuePct / 100);
+    const totalCost = qty * costPrice;
+    const totalCostEst = totalCost * COST_ESTIMATE_FACTOR;
+    const riskFee = totalCostEst * RISK_FEE_RATE;
+    const totalDeliveryFee = qty * deliveryFeePerUnit;
+
+    return this.buildMetricRow({
+      row_kind: 'product',
+      row_key: `product:${pid}`,
+      product_id: pid,
+      product_ids: [pid],
+      campaign_group_key: null,
+      item_code: product.item_code,
+      item_name: product.item_name,
+      total_quantity: qty,
+      selling_price: sellingPrice,
+      cost_price: costPrice,
+      delivery_fee_per_unit: deliveryFeePerUnit,
+      tax_value_pct: taxValuePct,
+      ads_spend: adsSpend,
+      revenue,
+      revenue_estimate: revenueEstimate,
+      revenue_tax: revenueTax,
+      total_cost: totalCost,
+      total_cost_est: totalCostEst,
+      risk_fee: riskFee,
+      total_delivery_fee: totalDeliveryFee,
+      member_unit_prices: null,
+    });
+  }
+
+  /**
+   * Aggregates order-weighted revenue/cost across member sizes. Full campaign
+   * ads spend is attached once to the group row (not split per size).
+   *
+   * If the same item_code appears in both a group campaign and a solo campaign,
+   * ads accrue separately but order qty rolls into the group column when the
+   * product is a group member.
+   */
+  private buildGroupRow(
+    group: {
+      campaignGroupKey: string;
+      productIds: number[];
+      itemCode: string;
+      adsSpend: number;
+    },
+    productMap: Map<number, Product>,
+    adaptionMap: Map<number, ProductAdaption>,
+    quantityByProduct: Map<number, number>,
+  ): MarketingSummaryProductRow | null {
+    let totalQuantity = 0;
+    let revenue = 0;
+    let revenueEstimate = 0;
+    let revenueTax = 0;
+    let totalCost = 0;
+    let totalCostEst = 0;
+    let totalDeliveryFee = 0;
+    const memberNames: string[] = [];
+    const memberUnitPrices: MarketingSummaryMemberUnitPrice[] = [];
+
+    for (const pid of group.productIds) {
       const product = productMap.get(pid);
       if (!product) {
         continue;
       }
+      memberNames.push(product.item_name);
       const adaption = adaptionMap.get(pid);
-
       const sellingPrice = Number(
         adaption?.selling_price ?? product.selling_price ?? 0,
       );
@@ -482,52 +697,121 @@ export class MarketingSummaryService {
       const deliveryFeePerUnit = Number(
         adaption?.delivery_fee ?? product.delivery_fee ?? 0,
       );
-      const taxValuePct = Number(product.tax_value || 0);
-
-      const qty = quantityByProduct.get(pid) ?? 0;
-      const adsSpend = adsSpendByProduct.get(pid) ?? 0;
-
-      const taxAds = adsSpend * ADS_TAX_RATE;
-      const revenue = qty * sellingPrice;
-      const revenueEstimate = revenue * REVENUE_RETURN_FACTOR;
-      const revenueTax = revenueEstimate * (taxValuePct / 100);
-      const totalCost = qty * costPrice;
-      const totalCostEst = totalCost * COST_ESTIMATE_FACTOR;
-      const riskFee = totalCostEst * RISK_FEE_RATE;
-      const totalDeliveryFee = qty * deliveryFeePerUnit;
-
-      const profit =
-        revenueEstimate -
-        (revenueTax + taxAds + totalCostEst + riskFee + totalDeliveryFee);
-
-      const adsPerRevenuePct =
-        revenueEstimate > 0 ? (adsSpend / revenueEstimate) * 100 : null;
-      const profitPerRevenuePct =
-        revenueEstimate > 0 ? (profit / revenueEstimate) * 100 : null;
-
-      rows.push({
-        product_id: pid,
+      memberUnitPrices.push({
         item_code: product.item_code,
-        item_name: product.item_name,
-        total_quantity: qty,
         selling_price: sellingPrice,
         cost_price: costPrice,
         delivery_fee_per_unit: deliveryFeePerUnit,
-        tax_value_pct: taxValuePct,
-        ads_spend: adsSpend,
-        tax_ads: taxAds,
-        revenue,
-        revenue_estimate: revenueEstimate,
-        revenue_tax: revenueTax,
-        total_cost: totalCost,
-        total_cost_est: totalCostEst,
-        risk_fee: riskFee,
-        total_delivery_fee: totalDeliveryFee,
-        ads_per_revenue_pct: adsPerRevenuePct,
-        profit,
-        profit_per_revenue_pct: profitPerRevenuePct,
       });
+      const taxValuePct = Number(product.tax_value || 0);
+      const qty = quantityByProduct.get(pid) ?? 0;
+
+      totalQuantity += qty;
+      const memberRevenue = qty * sellingPrice;
+      const memberRevenueEstimate = memberRevenue * REVENUE_RETURN_FACTOR;
+      revenue += memberRevenue;
+      revenueEstimate += memberRevenueEstimate;
+      revenueTax += memberRevenueEstimate * (taxValuePct / 100);
+      totalCost += qty * costPrice;
+      totalCostEst += qty * costPrice * COST_ESTIMATE_FACTOR;
+      totalDeliveryFee += qty * deliveryFeePerUnit;
     }
+
+    if (memberNames.length === 0) {
+      return null;
+    }
+
+    const riskFee = totalCostEst * RISK_FEE_RATE;
+    const itemName =
+      memberNames.length === 1
+        ? memberNames[0]
+        : `${memberNames[0]} (+${memberNames.length - 1} sizes)`;
+
+    return this.buildMetricRow({
+      row_kind: 'group',
+      row_key: `group:${group.campaignGroupKey}`,
+      product_id: null,
+      product_ids: group.productIds,
+      campaign_group_key: group.campaignGroupKey,
+      item_code: formatGroupProductCodeForDisplay(group.itemCode),
+      item_name: itemName,
+      total_quantity: totalQuantity,
+      selling_price: 0,
+      cost_price: 0,
+      delivery_fee_per_unit: 0,
+      tax_value_pct: 0,
+      ads_spend: group.adsSpend,
+      revenue,
+      revenue_estimate: revenueEstimate,
+      revenue_tax: revenueTax,
+      total_cost: totalCost,
+      total_cost_est: totalCostEst,
+      risk_fee: riskFee,
+      total_delivery_fee: totalDeliveryFee,
+      member_unit_prices: memberUnitPrices,
+    });
+  }
+
+  private buildRows(
+    productIds: number[],
+    productMap: Map<number, Product>,
+    adaptionMap: Map<number, ProductAdaption>,
+    quantityByProduct: Map<number, number>,
+    adsAttribution: {
+      adsSpendByProduct: Map<number, number>;
+      campaignGroups: Map<
+        string,
+        {
+          campaignGroupKey: string;
+          productIds: number[];
+          itemCode: string;
+          adsSpend: number;
+        }
+      >;
+      productIdToGroupKey: Map<number, string>;
+    },
+  ): MarketingSummaryProductRow[] {
+    const activeGroupKeys = new Set<string>();
+    for (const pid of productIds) {
+      const groupKey = adsAttribution.productIdToGroupKey.get(pid);
+      if (groupKey) {
+        activeGroupKeys.add(groupKey);
+      }
+    }
+
+    const rows: MarketingSummaryProductRow[] = [];
+    for (const groupKey of activeGroupKeys) {
+      const group = adsAttribution.campaignGroups.get(groupKey);
+      if (!group) {
+        continue;
+      }
+      const row = this.buildGroupRow(
+        group,
+        productMap,
+        adaptionMap,
+        quantityByProduct,
+      );
+      if (row) {
+        rows.push(row);
+      }
+    }
+
+    const standaloneProductIds = productIds.filter(
+      (pid) => !adsAttribution.productIdToGroupKey.has(pid),
+    );
+    for (const pid of standaloneProductIds) {
+      const row = this.buildProductRow(
+        pid,
+        productMap,
+        adaptionMap,
+        quantityByProduct,
+        adsAttribution.adsSpendByProduct,
+      );
+      if (row) {
+        rows.push(row);
+      }
+    }
+
     return rows;
   }
 

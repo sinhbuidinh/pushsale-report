@@ -24,8 +24,9 @@ import { generateGraphUrl, type GraphQueryParams } from 'src/common/helpers';
 import {
   CAMPAIGN_NAME_PIPE_SEPARATOR,
   CAMPAIGN_NAME_SUFFIX_SEPARATOR,
-  extractItemCodeKeyFromCampaignName,
+  extractItemCodeKeysFromCampaignName,
 } from './facebook-ads-campaign-name.util';
+import { aggregateSpendByProduct } from './facebook-ads-spend-aggregate.util';
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION?.trim() || 'v23.0';
@@ -101,14 +102,6 @@ interface SyncFacebookAdsInput {
   adAccountId: string;
   filterIsActiveCampaign: boolean;
 }
-
-type SpendBucket = {
-  productId: number | null;
-  productItemCode: string | null;
-  spend: number;
-  matchedAdsCount: number;
-  unmatchedAdsCount: number;
-};
 
 @Injectable()
 export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
@@ -458,6 +451,8 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
         ad_account_name: nameByAccountId.get(row.ad_account_id) ?? null,
         product_id: row.product_id,
         product_code: row.product_code,
+        product_ids: row.product_ids,
+        campaign_group_key: row.campaign_group_key,
         spend: Number(row.spend),
         currency: row.currency,
         matched_ads_count: row.matched_ads_count,
@@ -645,27 +640,27 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     const matcherByItemCodeKey = this.buildMatcherMapByItemCodeKey(products);
 
     // Step-4: Aggregate spend into buckets per product and one bucket for ads that matched nothing;
-    const buckets = this.aggregateSpendByProduct(
-      insights,
-      matcherByItemCodeKey,
-    );
+    const buckets = aggregateSpendByProduct(insights, matcherByItemCodeKey);
 
     const currency =
       insights.find((row) => row.account_currency)?.account_currency || 'VND';
 
     // Step-5: Map buckets to DB rows, delete existing rows for this sync_date + ad_account_id, then save (full replace for idempotency);
+    const unmatchedNotes = `Campaign name did not match a known product item_code (expected "item_code${CAMPAIGN_NAME_SUFFIX_SEPARATOR}…", "code1${CAMPAIGN_NAME_PIPE_SEPARATOR}code2${CAMPAIGN_NAME_SUFFIX_SEPARATOR}…", or legacy "item_code ${CAMPAIGN_NAME_PIPE_SEPARATOR} …").`;
     const payload = buckets.map((bucket) => ({
       sync_date: syncDate,
       ad_account_id: adAccountId,
       product_id: bucket.productId,
       product_code: bucket.productItemCode,
+      product_ids: bucket.productIds,
+      campaign_group_key: bucket.campaignGroupKey,
       spend: Number(bucket.spend.toFixed(2)),
       currency,
       matched_ads_count: bucket.matchedAdsCount,
       unmatched_ads_count: bucket.unmatchedAdsCount,
       notes:
-        bucket.productId == null
-          ? `Campaign name did not match a known product item_code (expected "item_code${CAMPAIGN_NAME_SUFFIX_SEPARATOR}…" or "item_code ${CAMPAIGN_NAME_PIPE_SEPARATOR} …").`
+        bucket.productId == null && !bucket.productIds?.length
+          ? unmatchedNotes
           : null,
     }));
 
@@ -678,13 +673,16 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     const totalSpend = payload.reduce((sum, row) => sum + Number(row.spend), 0);
-    const mappedRows = payload.filter((row) => row.product_id != null);
+    const isMappedRow = (row: (typeof payload)[number]) =>
+      row.product_id != null || (row.product_ids?.length ?? 0) > 0;
+    const mappedRows = payload.filter(isMappedRow);
+    const groupRows = payload.filter((row) => (row.product_ids?.length ?? 0) > 0);
     const unmappedSpend = payload
-      .filter((row) => row.product_id == null)
+      .filter((row) => !isMappedRow(row))
       .reduce((sum, row) => sum + Number(row.spend), 0);
 
     this.logger.log(
-      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insights.length} ads, ${mappedRows.length} mapped products, total spend ${totalSpend.toFixed(2)} ${currency}`,
+      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insights.length} ads, ${mappedRows.length} mapped rows (${groupRows.length} product groups), total spend ${totalSpend.toFixed(2)} ${currency}`,
     );
 
     return {
@@ -701,6 +699,8 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
         .map((row) => ({
           product_id: row.product_id,
           product_code: row.product_code,
+          product_ids: row.product_ids,
+          campaign_group_key: row.campaign_group_key,
           spend: Number(row.spend),
           currency: row.currency,
           matched_ads_count: row.matched_ads_count,
@@ -761,6 +761,8 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
       select: [
         'product_id',
         'product_code',
+        'product_ids',
+        'campaign_group_key',
         'spend',
         'currency',
         'matched_ads_count',
@@ -777,6 +779,8 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
       rows: rows.map((row) => ({
         product_id: row.product_id,
         product_code: row.product_code,
+        product_ids: row.product_ids,
+        campaign_group_key: row.campaign_group_key,
         spend: Number(row.spend),
         currency: row.currency,
         matched_ads_count: row.matched_ads_count,
@@ -825,9 +829,10 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
   ): string[] {
     const keys = new Set<string>();
     for (const row of insights) {
-      const key = extractItemCodeKeyFromCampaignName(row.campaign_name);
-      if (key) {
-        keys.add(key);
+      for (const key of extractItemCodeKeysFromCampaignName(row.campaign_name)) {
+        if (key) {
+          keys.add(key);
+        }
       }
     }
 
@@ -864,44 +869,6 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     }
 
     return map;
-  }
-
-  private aggregateSpendByProduct(
-    insights: FacebookAdInsight[],
-    matcherByItemCodeKey: Map<string, ProductMatcher>,
-  ): SpendBucket[] {
-    const grouped = new Map<string, SpendBucket>();
-    const unmatchedKey = '__unmatched__';
-
-    for (const row of insights) {
-      const spend = Number.parseFloat(row.spend || '0');
-      if (!Number.isFinite(spend) || spend <= 0) {
-        continue;
-      }
-
-      const codeKey = extractItemCodeKeyFromCampaignName(row.campaign_name);
-      const matched = codeKey ? matcherByItemCodeKey.get(codeKey) : undefined;
-      const key = matched ? String(matched.id) : unmatchedKey;
-      const bucket =
-        grouped.get(key) ||
-        ({
-          productId: matched?.id ?? null,
-          productItemCode: matched?.itemCode ?? null,
-          spend: 0,
-          matchedAdsCount: 0,
-          unmatchedAdsCount: 0,
-        } satisfies SpendBucket);
-
-      bucket.spend += spend;
-      if (matched) {
-        bucket.matchedAdsCount += 1;
-      } else {
-        bucket.unmatchedAdsCount += 1;
-      }
-      grouped.set(key, bucket);
-    }
-
-    return Array.from(grouped.values());
   }
 
   private async fetchAdInsightsForDate(
