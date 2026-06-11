@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Logger, UseGuards, Query } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Order } from './order.entity';
@@ -8,6 +8,8 @@ import { httpErrorMessage } from '../common/http-error.util';
 @Controller('orders')
 @UseGuards(JwtAuthGuard)
 export class OrdersController {
+  private readonly logger = new Logger(OrdersController.name);
+
   constructor(
     @InjectRepository(Order)
     private orderRepo: Repository<Order>,
@@ -42,8 +44,8 @@ export class OrdersController {
       if (date?.trim()) {
         const d = date.trim();
         qb.andWhere('o.created_time BETWEEN :fromDate AND :toDate', {
-          fromDate: `${d} 00:00:00`,
-          toDate: `${d} 23:59:59`,
+          fromDate: `${d}T00:00:00.000`,
+          toDate: `${d}T23:59:59.999`,
         });
       }
 
@@ -59,7 +61,16 @@ export class OrdersController {
         qb.andWhere('o.sale_user_id = :saleUserId', { saleUserId });
       }
 
-      const [rows, total] = await qb.skip(skip).take(take).getManyAndCount();
+      const pagedQb = qb.skip(skip).take(take);
+      // this.logger.log(
+      //   `findAll query params: page=${page}, limit=${limit}, search=${search}, date=${date}, marketing_user_id=${marketingUserIdStr}, sale_user_id=${saleUserIdStr}`,
+      // );
+      // this.logger.log(`findAll SQL: ${pagedQb.getSql()}`);
+      // this.logger.log(
+      //   `findAll parameters: ${JSON.stringify(pagedQb.getParameters())}`,
+      // );
+
+      const [rows, total] = await pagedQb.getManyAndCount();
 
       const data = rows.map((o) => {
         const { customer, marketing_user, sale_user, ...rest } = o;
