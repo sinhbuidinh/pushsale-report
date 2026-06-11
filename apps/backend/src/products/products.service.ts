@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Like, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Product } from './product.entity';
 import { ProductAdaption } from './product-adaption.entity';
 import {
@@ -40,6 +40,24 @@ export interface ProductListRow {
   delivery_fee: number;
   /** Product-level VAT percentage, e.g. 6.5, 8.5. */
   tax_value: number;
+  weight_gram: number;
+}
+
+interface ProductListCountRow {
+  total: string | number;
+}
+
+interface ProductListRawRow {
+  adaption_id: number | null;
+  product_id: number;
+  item_code: string;
+  item_name: string;
+  start_date: Date | string | null;
+  end_date: Date | string | null;
+  cost_price: string | number;
+  selling_price: string | number;
+  delivery_fee: string | number;
+  tax_value: string | number;
   weight_gram: number;
 }
 
@@ -200,9 +218,9 @@ export class ProductsService {
   }
 
   /**
-   * Paginates by **product** (search on item_code / item_name).
-   * Each product yields one row per adaptation, or a single row with `adaption_id: null` and
-   * prices from `product` when there are no adaptations yet.
+   * Paginates list rows (one per adaptation, or one placeholder per product without
+   * adaptations), sorted by `adaption.updated_at` descending. Products without
+   * adaptations fall back to `product.updated_at`.
    */
   async findProductListWithAdaptionsPage(
     page: number,
@@ -211,92 +229,120 @@ export class ProductsService {
   ): Promise<{ data: ProductListRow[]; total: number }> {
     const skip = (page - 1) * limit;
     const trimmed = (search ?? '').trim();
+    const productTable = this.productRepo.metadata.tableName;
+    const adaptionTable = this.adaptionRepo.metadata.tableName;
 
-    const where = trimmed
-      ? [
-          { item_code: Like(`%${trimmed}%`) },
-          { item_name: Like(`%${trimmed}%`) },
-        ]
-      : {};
+    const searchSql = trimmed
+      ? 'AND (p.item_code LIKE ? OR p.item_name LIKE ?)'
+      : '';
+    const searchParams = trimmed ? [`%${trimmed}%`, `%${trimmed}%`] : [];
 
-    const [products, total] = await this.productRepo.findAndCount({
-      where,
-      order: { id: 'DESC' },
-      skip,
-      take: limit,
-    });
-
-    if (products.length === 0) {
-      return { data: [], total };
+    const countSql = `
+      SELECT COUNT(*) AS total FROM (
+        SELECT a.id
+        FROM ${adaptionTable} a
+        INNER JOIN ${productTable} p ON p.id = a.product_id
+        WHERE 1=1 ${searchSql}
+        UNION ALL
+        SELECT p.id
+        FROM ${productTable} p
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ${adaptionTable} a2 WHERE a2.product_id = p.id
+        )
+        ${searchSql}
+      ) combined_rows
+    `;
+    const countParams = trimmed ? [...searchParams, ...searchParams] : [];
+    const countRows = await this.productRepo.query<ProductListCountRow[]>(
+      countSql,
+      countParams,
+    );
+    const total = Number(countRows[0]?.total ?? 0);
+    if (total === 0) {
+      return { data: [], total: 0 };
     }
 
-    const ids = products.map((p) => p.id);
-    const adaptions = await this.adaptionRepo
-      .createQueryBuilder('a')
-      .where('a.product_id IN (:...ids)', { ids })
-      .orderBy('a.start_date', 'ASC')
-      .addOrderBy('a.id', 'ASC')
-      .getMany();
+    const dataSql = `
+      SELECT *
+      FROM (
+        SELECT
+          a.id AS adaption_id,
+          p.id AS product_id,
+          p.item_code AS item_code,
+          p.item_name AS item_name,
+          a.start_date AS start_date,
+          a.end_date AS end_date,
+          a.cost_price AS cost_price,
+          a.selling_price AS selling_price,
+          a.delivery_fee AS delivery_fee,
+          p.tax_value AS tax_value,
+          p.weight_gram AS weight_gram,
+          COALESCE(a.updated_at, a.created_at) AS sort_updated_at,
+          a.id AS sort_tiebreak
+        FROM ${adaptionTable} a
+        INNER JOIN ${productTable} p ON p.id = a.product_id
+        WHERE 1=1 ${searchSql}
+        UNION ALL
+        SELECT
+          NULL AS adaption_id,
+          p.id AS product_id,
+          p.item_code AS item_code,
+          p.item_name AS item_name,
+          NULL AS start_date,
+          NULL AS end_date,
+          p.cost_price AS cost_price,
+          p.selling_price AS selling_price,
+          p.delivery_fee AS delivery_fee,
+          p.tax_value AS tax_value,
+          p.weight_gram AS weight_gram,
+          COALESCE(p.updated_at, p.created_at) AS sort_updated_at,
+          p.id AS sort_tiebreak
+        FROM ${productTable} p
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ${adaptionTable} a2 WHERE a2.product_id = p.id
+        )
+        ${searchSql}
+      ) list_rows
+      ORDER BY sort_updated_at DESC, sort_tiebreak DESC
+      LIMIT ? OFFSET ?
+    `;
+    const dataParams = [...countParams, limit, skip];
+    const rawRows = await this.productRepo.query<ProductListRawRow[]>(
+      dataSql,
+      dataParams,
+    );
 
-    const byProduct = new Map<number, ProductAdaption[]>();
-    for (const a of adaptions) {
-      const list = byProduct.get(a.product_id) ?? [];
-      list.push(a);
-      byProduct.set(a.product_id, list);
-    }
-
-    const mapAdaptionDates = (a: ProductAdaption) => {
-      const sd = a.start_date as unknown as Date | string;
-      const ed = a.end_date as unknown as Date | string | null;
-      const startStr =
-        sd instanceof Date ? calendarDateStr(sd) : String(sd).slice(0, 10);
-      const endStr =
-        ed == null
-          ? null
-          : ed instanceof Date
-            ? calendarDateStr(ed)
-            : String(ed).slice(0, 10);
-      return { startStr, endStr };
-    };
-
-    const data: ProductListRow[] = [];
-    for (const p of products) {
-      const list = byProduct.get(p.id) ?? [];
-      if (list.length === 0) {
-        data.push({
-          adaption_id: null,
-          product_id: p.id,
-          item_code: p.item_code,
-          item_name: p.item_name,
-          start_date: null,
-          end_date: null,
-          cost_price: Number(p.cost_price),
-          selling_price: Number(p.selling_price),
-          delivery_fee: Number(p.delivery_fee),
-          tax_value: Number(p.tax_value),
-          weight_gram: p.weight_gram,
-        });
-      } else {
-        for (const a of list) {
-          const { startStr, endStr } = mapAdaptionDates(a);
-          data.push({
-            adaption_id: a.id,
-            product_id: p.id,
-            item_code: p.item_code,
-            item_name: p.item_name,
-            start_date: startStr,
-            end_date: endStr,
-            cost_price: Number(a.cost_price),
-            selling_price: Number(a.selling_price),
-            delivery_fee: Number(a.delivery_fee),
-            tax_value: Number(p.tax_value),
-            weight_gram: p.weight_gram,
-          });
-        }
-      }
-    }
+    const data: ProductListRow[] = rawRows.map((row) =>
+      this.mapRawProductListRow(row),
+    );
 
     return { data, total };
+  }
+
+  private mapRawProductListRow(row: ProductListRawRow): ProductListRow {
+    return {
+      adaption_id: row.adaption_id == null ? null : Number(row.adaption_id),
+      product_id: Number(row.product_id),
+      item_code: row.item_code,
+      item_name: row.item_name,
+      start_date: this.toYmdOrNull(row.start_date),
+      end_date: this.toYmdOrNull(row.end_date),
+      cost_price: Number(row.cost_price),
+      selling_price: Number(row.selling_price),
+      delivery_fee: Number(row.delivery_fee),
+      tax_value: Number(row.tax_value),
+      weight_gram: Number(row.weight_gram),
+    };
+  }
+
+  private toYmdOrNull(value: Date | string | null | undefined): string | null {
+    if (value == null) {
+      return null;
+    }
+    if (value instanceof Date) {
+      return calendarDateStr(value);
+    }
+    return String(value).slice(0, 10);
   }
 
   async createFirstAdaption(

@@ -27,6 +27,21 @@ import SyncIcon from '@mui/icons-material/Sync';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import apiClient from '../../../shared/api/apiClient';
 
+/** Display multi-item_code groups with ", " (handles legacy "|" rows). */
+const formatProductCodeDisplay = (productCode: string | null): string | null => {
+  if (!productCode) {
+    return null;
+  }
+  if (!productCode.includes('|')) {
+    return productCode;
+  }
+  return productCode
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(', ');
+};
+
 interface MarketingUser {
   user_id: number;
   display_name: string;
@@ -57,6 +72,8 @@ interface FacebookAdsDailyCostRow {
   ad_account_name: string | null;
   product_id: number | null;
   product_code: string | null;
+  product_ids: number[] | null;
+  campaign_group_key: string | null;
   spend: number;
   currency: string;
   matched_ads_count: number;
@@ -624,7 +641,9 @@ const FacebookAdsSyncPage = () => {
 
                     const formatNormalizeAnchorLabel = (
                       anchor: FacebookAdsDailyCostRow,
-                    ) => anchor.product_code ?? `#${anchor.id}`;
+                    ) =>
+                      formatProductCodeDisplay(anchor.product_code) ??
+                      `#${anchor.id}`;
 
                     return dailyCostRows.map((row) => {
                       const anchor = normalizeAnchorByAccountId.get(
@@ -657,7 +676,7 @@ const FacebookAdsSyncPage = () => {
                       </TableCell>
                       <TableCell>{formatRowAccountLabel(row)}</TableCell>
                       <TableCell>
-                        {row.product_code ?? (
+                        {formatProductCodeDisplay(row.product_code) ?? (
                           <Chip label="Unmapped" size="small" color="warning" />
                         )}
                       </TableCell>
