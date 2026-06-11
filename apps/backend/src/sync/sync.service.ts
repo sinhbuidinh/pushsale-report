@@ -188,9 +188,8 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   private async catchUpMissedDailySync(): Promise<void> {
     try {
       const yesterday = yesterdayCalendarInZone(getAppTimeZone());
-      const completed = await this.syncLogRepo.findCompletedOrderSyncForDate(
-        yesterday,
-      );
+      const completed =
+        await this.syncLogRepo.findCompletedOrderSyncForDate(yesterday);
       if (completed) {
         this.logger.log(
           `Startup catch-up: sync for ${yesterday} already completed (sync_log #${completed.id}); nothing to do.`,
@@ -247,9 +246,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       error_details: row.error_details ?? null,
       synced_count: Number(row.synced_count ?? 0),
       page_no:
-        row.page_no != null && row.page_no !== ''
-          ? Number(row.page_no)
-          : null,
+        row.page_no != null && row.page_no !== '' ? Number(row.page_no) : null,
       data: row.data ?? null,
       has_response:
         row.has_response === 1 ||
@@ -305,13 +302,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   async replaySyncLog(logId: number) {
     const log = await this.syncLogRepo.findOne({
       where: { id: logId },
-      select: [
-        'id',
-        'page_no',
-        'response',
-        'status',
-        'sync_date',
-      ],
+      select: ['id', 'page_no', 'response', 'status', 'sync_date'],
     });
     if (!log) {
       throw new BadRequestException(`Sync log #${logId} not found`);
@@ -588,9 +579,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const pageDur = durationPartsSince(pageHandledStartedAt);
       const responseJson =
-        lastResponseBody != null
-          ? JSON.stringify(lastResponseBody)
-          : undefined;
+        lastResponseBody != null ? JSON.stringify(lastResponseBody) : undefined;
 
       await this.syncLogRepo.updateById(logId, {
         status: SyncStatus.Failed,

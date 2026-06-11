@@ -44,8 +44,7 @@ export class SyncLogRepository extends BaseRepository<SyncLog> {
     return (
       successes.find(
         (log) =>
-          log.page_no != null &&
-          recordCountFromLog(log) < PUSHSALE_PAGE_SIZE,
+          log.page_no != null && recordCountFromLog(log) < PUSHSALE_PAGE_SIZE,
       ) ?? null
     );
   }
