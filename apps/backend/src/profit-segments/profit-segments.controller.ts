@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { httpErrorMessage } from '../common/http-error.util';
 import {
   ProfitSegmentsService,
+  UpdatePoasSettingsDto,
   UpdateProfitSegmentDto,
 } from './profit-segments.service';
 
@@ -29,6 +30,35 @@ export class ProfitSegmentsController {
       const data = await this.service.findAll();
       return { status: true, data };
     } catch (error) {
+      return { status: false, error: httpErrorMessage(error) };
+    }
+  }
+
+  /** Returns global POAS ratio thresholds. */
+  @Get('poas-settings')
+  async getPoasSettings() {
+    try {
+      const data = await this.service.getPoasSettings();
+      return { status: true, data };
+    } catch (error) {
+      return { status: false, error: httpErrorMessage(error) };
+    }
+  }
+
+  /** Updates global POAS ratio thresholds. */
+  @Put('poas-settings')
+  async updatePoasSettings(@Body() body: Record<string, unknown>) {
+    try {
+      const dto = this.coercePoasUpdateDto(body);
+      const data = await this.service.updatePoasSettings(dto);
+      return { status: true, data };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        return { status: false, error: error.message };
+      }
       return { status: false, error: httpErrorMessage(error) };
     }
   }
@@ -54,7 +84,7 @@ export class ProfitSegmentsController {
     }
   }
 
-  /** Resets all three default segments to their factory threshold values. */
+  /** Resets POAS settings and all three default ROS segments. */
   @Post('reset-defaults')
   async resetDefaults() {
     try {
@@ -63,6 +93,22 @@ export class ProfitSegmentsController {
     } catch (error) {
       return { status: false, error: httpErrorMessage(error) };
     }
+  }
+
+  private coercePoasUpdateDto(
+    body: Record<string, unknown>,
+  ): UpdatePoasSettingsDto {
+    const dto: UpdatePoasSettingsDto = {};
+    if (body.danger_max !== undefined) {
+      dto.danger_max = this.toNumber('danger_max', body.danger_max);
+    }
+    if (body.warning_max !== undefined) {
+      dto.warning_max = this.toNumber('warning_max', body.warning_max);
+    }
+    if (body.good_max !== undefined) {
+      dto.good_max = this.toNumber('good_max', body.good_max);
+    }
+    return dto;
   }
 
   private coerceUpdateDto(

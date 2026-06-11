@@ -30,8 +30,8 @@ import apiClient from '../../../shared/api/apiClient';
 import { getStoredUser } from '../../../shared/auth/authStorage';
 import {
   BAND_THEME,
-  classifyProfitPct,
-  findSegmentForPrice,
+  classifyPoasRatio,
+  type PoasSettings,
   type ProfitBand,
   type ProfitSegment,
 } from '../../profit-segments/profitSegments';
@@ -272,6 +272,27 @@ const unmatchedAdsColor = (spend: number): string =>
 
 const UNMATCHED_HIGHLIGHT_METRICS = new Set(['ads_spend', 'tax_ads']);
 
+/** Full-row background tints for key metric rows (text colour unchanged). */
+const ORANGE_ROW_METRICS = new Set(['ads_spend', 'revenue_estimate']);
+const GREEN_ROW_METRICS = new Set(['poas']);
+const ROW_HIGHLIGHT_ORANGE_BG = 'rgba(255, 152, 0, 0.18)';
+const ROW_HIGHLIGHT_GREEN_BG = 'rgba(76, 175, 80, 0.18)';
+
+function rowHighlightBg(metricKey: string): string | undefined {
+  if (ORANGE_ROW_METRICS.has(metricKey)) return ROW_HIGHLIGHT_ORANGE_BG;
+  if (GREEN_ROW_METRICS.has(metricKey)) return ROW_HIGHLIGHT_GREEN_BG;
+  return undefined;
+}
+
+function withRowHighlight(
+  metricKey: string,
+  sx?: React.ComponentProps<typeof TableCell>['sx'],
+): React.ComponentProps<typeof TableCell>['sx'] {
+  const bg = rowHighlightBg(metricKey);
+  if (!bg) return sx;
+  return { ...sx, bgcolor: bg };
+}
+
 function unmatchedBucketCellSx(
   metricKey: string,
   value: number | null,
@@ -315,48 +336,12 @@ function profitAfterAdsSx(
   };
 }
 
-/**
- * Themed colour for the ROS (%) value of a single product row, based on the
- * configured profit-segment thresholds. Falls back to the positive/negative
- * `profitColor` when no segment matches (e.g. settings not loaded, or selling
- * price outside every configured window).
- */
-function bandForRow(
-  segments: ProfitSegment[],
-  sellingPrice: number,
-  rosPct: number | null,
+function bandForPoas(
+  settings: PoasSettings | null | undefined,
+  poas: number | null,
 ): ProfitBand | null {
-  if (segments.length === 0) return null;
-  const segment = findSegmentForPrice(segments, sellingPrice);
-  if (!segment) return null;
-  return classifyProfitPct(segment, rosPct);
-}
-
-/** Quantity-weighted average selling price across product rows. */
-function weightedAvgSellingPrice(
-  rows: MarketingSummaryRow[],
-): number | null {
-  let weightedSum = 0;
-  let totalQty = 0;
-  for (const row of rows) {
-    const qty = row.total_quantity;
-    if (qty > 0) {
-      weightedSum += row.selling_price * qty;
-      totalQty += qty;
-    }
-  }
-  return totalQty > 0 ? weightedSum / totalQty : null;
-}
-
-/** Profit-segment band for the combined TOTAL column. */
-function bandForTotals(
-  segments: ProfitSegment[],
-  rows: MarketingSummaryRow[],
-  totals: MarketingSummaryTotals,
-): ProfitBand | null {
-  const avgPrice = weightedAvgSellingPrice(rows);
-  if (avgPrice == null) return null;
-  return bandForRow(segments, avgPrice, totalRos(totals));
+  if (!settings) return null;
+  return classifyPoasRatio(settings, poas);
 }
 
 function emphasizeMetricSx(
@@ -696,6 +681,7 @@ const buildMetrics = (showFullInfo: boolean): MetricDef[] => {
       key: 'poas',
       label: 'Chỉ số POAS',
       format: 'ratio',
+      emphasize: true,
       tooltip: 'Tổng lợi nhuận gộp ÷ (ADS + Thuế TK 10%).',
       value: rowPoas,
       unmatched: () => null,
@@ -821,6 +807,16 @@ const MarketingSummaryPage: React.FC = () => {
     staleTime: 60_000,
   });
 
+  const { data: poasSettings } = useQuery<PoasSettings>({
+    queryKey: ['poas-settings'],
+    queryFn: async () => {
+      const response = await apiClient.get('/profit-segments/poas-settings');
+      if (response.data.status) return response.data.data as PoasSettings;
+      throw new Error(response.data.error || 'Failed to load POAS settings');
+    },
+    staleTime: 60_000,
+  });
+
   const segmentList = useMemo(() => segments ?? [], [segments]);
 
   const isAllUsersView = submitted?.marketingUserId === ALL_MARKETING_USERS;
@@ -855,10 +851,10 @@ const MarketingSummaryPage: React.FC = () => {
   const allData =
     data && isAllUsersView ? (data as MarketingSummaryAllResponse) : null;
 
-  const singleTotalBand = useMemo(() => {
-    if (!singleData || segmentList.length === 0) return null;
-    return bandForTotals(segmentList, singleData.rows, singleData.totals);
-  }, [singleData, segmentList]);
+  const singleTotalPoasBand = useMemo(() => {
+    if (!singleData) return null;
+    return bandForPoas(poasSettings, totalPoas(singleData.totals));
+  }, [singleData, poasSettings]);
 
   const allUsersGrandTotals = useMemo(() => {
     if (!allData || allData.users.length === 0) return null;
@@ -1186,12 +1182,6 @@ const MarketingSummaryPage: React.FC = () => {
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
                     Quảng cáo không khớp
                   </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Tổng lợi nhuận gộp
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    ROS (%)
-                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1223,24 +1213,6 @@ const MarketingSummaryPage: React.FC = () => {
                           {fmtNum(user.unmatched.ads_spend)}
                         </Typography>
                       </Tooltip>
-                    </TableCell>
-                    <TableCell
-                      align="right"
-                      sx={profitVsAdsSx(
-                        user.totals.profit,
-                        user.totals.ads_spend,
-                      )}
-                    >
-                      {fmtNum(user.totals.profit)}
-                    </TableCell>
-                    <TableCell
-                      align="right"
-                      sx={{
-                        fontWeight: 700,
-                        color: profitColor(user.totals.profit),
-                      }}
-                    >
-                      {fmtPct(totalRos(user.totals))}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1349,9 +1321,9 @@ const MarketingSummaryPage: React.FC = () => {
                   return (
                     <TableRow key={metric.key} hover>
                       <StickyBodyCell
-                        sx={{
+                        sx={withRowHighlight(metric.key, {
                           fontWeight: metric.emphasize ? 700 : 500,
-                        }}
+                        })}
                       >
                         {metric.tooltip ? (
                           <Tooltip title={metric.tooltip}>
@@ -1363,11 +1335,15 @@ const MarketingSummaryPage: React.FC = () => {
                       </StickyBodyCell>
                       {allData.users.map((user) => {
                         const v = metric.total(user.totals);
+                        const poasBand =
+                          metric.key === 'poas'
+                            ? bandForPoas(poasSettings, totalPoas(user.totals))
+                            : null;
                         return (
                           <TableCell
                             key={user.marketing_user_id}
                             align="right"
-                            sx={{
+                            sx={withRowHighlight(metric.key, {
                               bgcolor: 'action.selected',
                               fontWeight: metric.emphasize ? 700 : undefined,
                               ...(metric.key === 'profit'
@@ -1379,12 +1355,15 @@ const MarketingSummaryPage: React.FC = () => {
                                   ? profitAfterAdsSx(
                                       totalProfitAfterAds(user.totals),
                                     )
-                                  : metric.emphasize && metric.key === 'ros'
-                                    ? {
-                                        color: profitColor(user.totals.profit),
-                                      }
-                                    : {}),
-                            }}
+                                  : metric.key === 'ros'
+                                    ? profitAfterAdsSx(v)
+                                    : metric.key === 'poas' && poasBand
+                                      ? emphasizeMetricSx(
+                                          poasBand,
+                                          user.totals.profit,
+                                        )
+                                      : {}),
+                            })}
                           >
                             {renderValue(v, metric.format)}
                           </TableCell>
@@ -1393,7 +1372,7 @@ const MarketingSummaryPage: React.FC = () => {
                       {allUsersGrandTotals && (
                         <TableCell
                           align="right"
-                          sx={{
+                          sx={withRowHighlight(metric.key, {
                             bgcolor: 'action.selected',
                             borderLeft: 2,
                             borderColor: 'divider',
@@ -1405,14 +1384,18 @@ const MarketingSummaryPage: React.FC = () => {
                                 )
                               : metric.key === 'profit_after_ads'
                                 ? profitAfterAdsSx(grandTotalValue)
-                                : metric.emphasize && metric.key === 'ros'
-                                  ? {
-                                      color: profitColor(
+                                : metric.key === 'ros'
+                                  ? profitAfterAdsSx(grandTotalValue)
+                                  : metric.key === 'poas'
+                                    ? emphasizeMetricSx(
+                                        bandForPoas(
+                                          poasSettings,
+                                          totalPoas(allUsersGrandTotals),
+                                        ),
                                         allUsersGrandTotals.profit,
-                                      ),
-                                    }
-                                  : {}),
-                          }}
+                                      )
+                                    : {}),
+                          })}
                         >
                           {renderValue(grandTotalValue, metric.format)}
                         </TableCell>
@@ -1507,12 +1490,6 @@ const MarketingSummaryPage: React.FC = () => {
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
                     Quảng cáo không khớp
                   </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    Tổng lợi nhuận gộp
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    ROS (%)
-                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1542,24 +1519,6 @@ const MarketingSummaryPage: React.FC = () => {
                           {fmtNum(singleData.unmatched.ads_spend)}
                         </Typography>
                     </Tooltip>
-                  </TableCell>
-                  <TableCell
-                    align="right"
-                    sx={profitVsAdsSx(
-                      singleData.totals.profit,
-                      singleData.totals.ads_spend,
-                    )}
-                  >
-                    {fmtNum(singleData.totals.profit)}
-                  </TableCell>
-                  <TableCell
-                    align="right"
-                    sx={emphasizeMetricSx(
-                      singleTotalBand,
-                      singleData.totals.profit,
-                    )}
-                  >
-                    {fmtPct(totalRos(singleData.totals))}
                   </TableCell>
                 </TableRow>
               </TableBody>
@@ -1692,9 +1651,9 @@ const MarketingSummaryPage: React.FC = () => {
                   return (
                     <TableRow key={metric.key} hover>
                       <StickyBodyCell
-                        sx={{
+                        sx={withRowHighlight(metric.key, {
                           fontWeight: metric.emphasize ? 700 : 500,
-                        }}
+                        })}
                       >
                         {metric.tooltip ? (
                           <Tooltip title={metric.tooltip}>
@@ -1707,22 +1666,19 @@ const MarketingSummaryPage: React.FC = () => {
                       {singleData.rows.map((row) => {
                         const v = metric.value(row);
                         const isProfit = metric.key === 'profit';
-                        const isRos = metric.key === 'ros';
+                        const isPoas = metric.key === 'poas';
                         const isProfitAfterAds =
                           metric.key === 'profit_after_ads';
-                        const band = bandForRow(
-                          segmentList,
-                          row.selling_price,
-                          rowRos(row),
-                        );
+                        const isRos = metric.key === 'ros';
+                        const poasBand = bandForPoas(poasSettings, rowPoas(row));
                         let sx: React.ComponentProps<typeof TableCell>['sx'];
                         if (isProfit) {
                           sx = profitVsAdsSx(row.profit, row.ads_spend);
-                        } else if (isProfitAfterAds) {
+                        } else if (isProfitAfterAds || isRos) {
                           sx = profitAfterAdsSx(v);
-                        } else if (metric.emphasize && isRos) {
-                          if (band) {
-                            const theme = BAND_THEME[band];
+                        } else if (metric.emphasize && isPoas) {
+                          if (poasBand) {
+                            const theme = BAND_THEME[poasBand];
                             sx = {
                               fontWeight: 700,
                               color: theme.fg,
@@ -1739,7 +1695,7 @@ const MarketingSummaryPage: React.FC = () => {
                           <TableCell
                             key={row.product_id}
                             align="right"
-                            sx={sx}
+                            sx={withRowHighlight(metric.key, sx)}
                           >
                             {renderValue(v, metric.format)}
                             {metric.cellAnnotation &&
@@ -1764,9 +1720,12 @@ const MarketingSummaryPage: React.FC = () => {
                       })}
                       <TableCell
                         align="right"
-                        sx={unmatchedBucketCellSx(
+                        sx={withRowHighlight(
                           metric.key,
-                          metric.unmatched(singleData.unmatched),
+                          unmatchedBucketCellSx(
+                            metric.key,
+                            metric.unmatched(singleData.unmatched),
+                          ),
                         )}
                       >
                         {renderValue(
@@ -1776,24 +1735,26 @@ const MarketingSummaryPage: React.FC = () => {
                       </TableCell>
                       <TableCell
                         align="right"
-                        sx={
+                        sx={withRowHighlight(
+                          metric.key,
                           metric.key === 'profit'
                             ? profitVsAdsSx(
                                 singleData.totals.profit,
                                 singleData.totals.ads_spend,
                               )
-                            : metric.key === 'profit_after_ads'
+                            : metric.key === 'profit_after_ads' ||
+                                metric.key === 'ros'
                               ? profitAfterAdsSx(totalValue)
-                              : metric.emphasize && metric.key === 'ros'
+                              : metric.key === 'poas'
                                 ? emphasizeMetricSx(
-                                    singleTotalBand,
+                                    singleTotalPoasBand,
                                     singleData.totals.profit,
                                   )
                                 : {
                                     bgcolor: 'action.selected',
                                     fontWeight: 700,
-                                  }
-                        }
+                                  },
+                        )}
                       >
                         {renderValue(totalValue, metric.format)}
                       </TableCell>
