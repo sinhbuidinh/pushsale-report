@@ -676,7 +676,9 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     const isMappedRow = (row: (typeof payload)[number]) =>
       row.product_id != null || (row.product_ids?.length ?? 0) > 0;
     const mappedRows = payload.filter(isMappedRow);
-    const groupRows = payload.filter((row) => (row.product_ids?.length ?? 0) > 0);
+    const groupRows = payload.filter(
+      (row) => (row.product_ids?.length ?? 0) > 0,
+    );
     const unmappedSpend = payload
       .filter((row) => !isMappedRow(row))
       .reduce((sum, row) => sum + Number(row.spend), 0);
@@ -829,7 +831,9 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
   ): string[] {
     const keys = new Set<string>();
     for (const row of insights) {
-      for (const key of extractItemCodeKeysFromCampaignName(row.campaign_name)) {
+      for (const key of extractItemCodeKeysFromCampaignName(
+        row.campaign_name,
+      )) {
         if (key) {
           keys.add(key);
         }

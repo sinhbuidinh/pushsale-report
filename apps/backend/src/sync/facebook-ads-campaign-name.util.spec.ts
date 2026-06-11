@@ -15,9 +15,9 @@ describe('extractItemCodeKeysFromCampaignName', () => {
   });
 
   it('extracts item_code before pipe separator (legacy format)', () => {
-    expect(extractItemCodeKeysFromCampaignName('SKU123 | Summer promo')).toEqual(
-      ['sku123'],
-    );
+    expect(
+      extractItemCodeKeysFromCampaignName('SKU123 | Summer promo'),
+    ).toEqual(['sku123']);
   });
 
   it('extracts multiple item_codes from pipe-separated prefix', () => {

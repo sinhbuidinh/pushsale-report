@@ -43,6 +43,24 @@ export interface ProductListRow {
   weight_gram: number;
 }
 
+interface ProductListCountRow {
+  total: string | number;
+}
+
+interface ProductListRawRow {
+  adaption_id: number | null;
+  product_id: number;
+  item_code: string;
+  item_name: string;
+  start_date: Date | string | null;
+  end_date: Date | string | null;
+  cost_price: string | number;
+  selling_price: string | number;
+  delivery_fee: string | number;
+  tax_value: string | number;
+  weight_gram: number;
+}
+
 export interface CreateProductAdaptionDto {
   start_date: string;
   end_date: string;
@@ -234,10 +252,11 @@ export class ProductsService {
         ${searchSql}
       ) combined_rows
     `;
-    const countParams = trimmed
-      ? [...searchParams, ...searchParams]
-      : [];
-    const countRows = await this.productRepo.query(countSql, countParams);
+    const countParams = trimmed ? [...searchParams, ...searchParams] : [];
+    const countRows = await this.productRepo.query<ProductListCountRow[]>(
+      countSql,
+      countParams,
+    );
     const total = Number(countRows[0]?.total ?? 0);
     if (total === 0) {
       return { data: [], total: 0 };
@@ -288,37 +307,32 @@ export class ProductsService {
       LIMIT ? OFFSET ?
     `;
     const dataParams = [...countParams, limit, skip];
-    const rawRows = await this.productRepo.query(dataSql, dataParams);
+    const rawRows = await this.productRepo.query<ProductListRawRow[]>(
+      dataSql,
+      dataParams,
+    );
 
-    const data: ProductListRow[] = rawRows.map(
-      (row: {
-        adaption_id: number | null;
-        product_id: number;
-        item_code: string;
-        item_name: string;
-        start_date: Date | string | null;
-        end_date: Date | string | null;
-        cost_price: string | number;
-        selling_price: string | number;
-        delivery_fee: string | number;
-        tax_value: string | number;
-        weight_gram: number;
-      }) => ({
-        adaption_id: row.adaption_id == null ? null : Number(row.adaption_id),
-        product_id: Number(row.product_id),
-        item_code: row.item_code,
-        item_name: row.item_name,
-        start_date: this.toYmdOrNull(row.start_date),
-        end_date: this.toYmdOrNull(row.end_date),
-        cost_price: Number(row.cost_price),
-        selling_price: Number(row.selling_price),
-        delivery_fee: Number(row.delivery_fee),
-        tax_value: Number(row.tax_value),
-        weight_gram: Number(row.weight_gram),
-      }),
+    const data: ProductListRow[] = rawRows.map((row) =>
+      this.mapRawProductListRow(row),
     );
 
     return { data, total };
+  }
+
+  private mapRawProductListRow(row: ProductListRawRow): ProductListRow {
+    return {
+      adaption_id: row.adaption_id == null ? null : Number(row.adaption_id),
+      product_id: Number(row.product_id),
+      item_code: row.item_code,
+      item_name: row.item_name,
+      start_date: this.toYmdOrNull(row.start_date),
+      end_date: this.toYmdOrNull(row.end_date),
+      cost_price: Number(row.cost_price),
+      selling_price: Number(row.selling_price),
+      delivery_fee: Number(row.delivery_fee),
+      tax_value: Number(row.tax_value),
+      weight_gram: Number(row.weight_gram),
+    };
   }
 
   private toYmdOrNull(value: Date | string | null | undefined): string | null {

@@ -24,8 +24,7 @@ export function extractItemCodeKeysFromCampaignName(
   }
 
   const suffixIdx = raw.indexOf(CAMPAIGN_NAME_SUFFIX_SEPARATOR);
-  const codesSegment =
-    suffixIdx >= 0 ? raw.slice(0, suffixIdx).trim() : raw;
+  const codesSegment = suffixIdx >= 0 ? raw.slice(0, suffixIdx).trim() : raw;
   if (!codesSegment) {
     return [];
   }

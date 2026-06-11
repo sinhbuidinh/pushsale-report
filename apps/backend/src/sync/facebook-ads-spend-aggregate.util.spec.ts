@@ -14,7 +14,10 @@ describe('aggregateSpendByProduct', () => {
       'hvsh-bb-30',
       { id: 30, itemCode: 'HVSH-BB-30', matchToken: 'hvsh-bb-30' },
     ],
-    ['hvsh-sac-aq', { id: 1, itemCode: 'HVSH-SAC-AQ', matchToken: 'hvsh-sac-aq' }],
+    [
+      'hvsh-sac-aq',
+      { id: 1, itemCode: 'HVSH-SAC-AQ', matchToken: 'hvsh-sac-aq' },
+    ],
   ]);
 
   it('maps single-code campaigns to one product bucket with full spend', () => {
