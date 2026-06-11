@@ -34,12 +34,20 @@ export class SyncLog {
   status: SyncStatus;
 
   @Column({ type: 'text', nullable: true })
-  error_details: string;
+  error_details: string | null;
 
   @Column({ default: 0 })
   synced_count: number;
 
-  /** JSON: sync_date, pageBegin, per-page stats (page_N), optional error summary. */
+  /** PushSale page index (1-based). Null for legacy run-level logs. */
+  @Column({ type: 'int', nullable: true })
+  page_no: number | null;
+
+  /** Raw PushSale GetOrderByConditions JSON response for this page. */
+  @Column({ type: 'longtext', nullable: true })
+  response: string | null;
+
+  /** JSON: per-page timing / request metadata (not the full API payload). */
   @Column({ type: 'json', nullable: true })
   data: object | null;
 }

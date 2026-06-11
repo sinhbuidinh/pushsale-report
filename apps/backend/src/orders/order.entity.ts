@@ -38,6 +38,10 @@ export class Order {
   @Column({ type: 'simple-array' })
   product_ids: number[];
 
+  /** PushSale line-item codes from `details[].itemCode`. */
+  @Column({ type: 'simple-array', nullable: true })
+  item_codes: string[];
+
   @Column({ type: 'int' })
   total_quantity: number;
 
@@ -61,6 +65,18 @@ export class Order {
 
   @Column({ nullable: true })
   reason_create: string;
+
+  /** Mapped from PushSale `orderStatusName` (see OrderStatus). */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  status: string | null;
+
+  /** Raw PushSale `orderStatusName` label. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  status_name: string | null;
+
+  /** Raw PushSale `operationResultName` label. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  operation_result_name: string | null;
 
   @Column({ nullable: true })
   confirm_time: string;
