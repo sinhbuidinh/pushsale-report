@@ -1,4 +1,7 @@
-import { aggregateSpendByProduct } from './facebook-ads-spend-aggregate.util';
+import {
+  aggregateSpendByProduct,
+  formatUnmatchedCampaignNotes,
+} from './facebook-ads-spend-aggregate.util';
 
 describe('aggregateSpendByProduct', () => {
   const matcherMap = new Map([
@@ -78,7 +81,11 @@ describe('aggregateSpendByProduct', () => {
 
   it('sends fully unmatched campaigns to the unmatched bucket', () => {
     const buckets = aggregateSpendByProduct(
-      [{ campaign_name: 'UNKNOWN-A|UNKNOWN-B note', spend: '50' }],
+      [
+        { campaign_name: 'HSSV-TXD 1', spend: '30' },
+        { campaign_name: 'not match item_code', spend: '20' },
+        { campaign_name: 'HSSV-TXD 1', spend: '10' },
+      ],
       matcherMap,
     );
 
@@ -86,9 +93,22 @@ describe('aggregateSpendByProduct', () => {
     expect(buckets[0]).toMatchObject({
       productId: null,
       productIds: null,
-      spend: 50,
+      spend: 60,
       matchedAdsCount: 0,
-      unmatchedAdsCount: 1,
+      unmatchedAdsCount: 3,
+      unmatchedCampaignNames: ['HSSV-TXD 1', 'not match item_code'],
     });
+  });
+});
+
+describe('formatUnmatchedCampaignNotes', () => {
+  it('serializes distinct campaign names as JSON', () => {
+    expect(
+      formatUnmatchedCampaignNotes(['HSSV-TXD 1', 'not match item_code']),
+    ).toBe('["HSSV-TXD 1","not match item_code"]');
+  });
+
+  it('returns null when there are no campaign names', () => {
+    expect(formatUnmatchedCampaignNotes([])).toBeNull();
   });
 });

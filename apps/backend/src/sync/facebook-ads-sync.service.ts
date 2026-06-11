@@ -21,12 +21,11 @@ import { User } from '../users/user.entity';
 import { FacebookAdsDailyCost } from './facebook-ads-daily-cost.entity';
 import { FacebookAdsInsightsSnapshot } from './facebook-ads-insights-snapshot.entity';
 import { generateGraphUrl, type GraphQueryParams } from 'src/common/helpers';
+import { extractItemCodeKeysFromCampaignName } from './facebook-ads-campaign-name.util';
 import {
-  CAMPAIGN_NAME_PIPE_SEPARATOR,
-  CAMPAIGN_NAME_SUFFIX_SEPARATOR,
-  extractItemCodeKeysFromCampaignName,
-} from './facebook-ads-campaign-name.util';
-import { aggregateSpendByProduct } from './facebook-ads-spend-aggregate.util';
+  aggregateSpendByProduct,
+  formatUnmatchedCampaignNotes,
+} from './facebook-ads-spend-aggregate.util';
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION?.trim() || 'v23.0';
@@ -646,7 +645,6 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
       insights.find((row) => row.account_currency)?.account_currency || 'VND';
 
     // Step-5: Map buckets to DB rows, delete existing rows for this sync_date + ad_account_id, then save (full replace for idempotency);
-    const unmatchedNotes = `Campaign name did not match a known product item_code (expected "item_code${CAMPAIGN_NAME_SUFFIX_SEPARATOR}…", "code1${CAMPAIGN_NAME_PIPE_SEPARATOR}code2${CAMPAIGN_NAME_SUFFIX_SEPARATOR}…", or legacy "item_code ${CAMPAIGN_NAME_PIPE_SEPARATOR} …").`;
     const payload = buckets.map((bucket) => ({
       sync_date: syncDate,
       ad_account_id: adAccountId,
@@ -660,7 +658,7 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
       unmatched_ads_count: bucket.unmatchedAdsCount,
       notes:
         bucket.productId == null && !bucket.productIds?.length
-          ? unmatchedNotes
+          ? formatUnmatchedCampaignNotes(bucket.unmatchedCampaignNames)
           : null,
     }));
 
