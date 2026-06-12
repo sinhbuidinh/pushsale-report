@@ -12,9 +12,8 @@ import {
 } from '@mui/material';
 import { LockOutlined as LockOutlinedIcon } from '@mui/icons-material';
 import {
-  AUTH_TOKEN_KEY,
-  AUTH_USER_KEY,
   getDefaultLandingPath,
+  setAuthSession,
 } from '../../../shared/auth/authStorage';
 
 const LoginPage = () => {
@@ -37,6 +36,7 @@ const LoginPage = () => {
     try {
       const res = await fetch(`${apiBase}/auth/login`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
@@ -57,8 +57,7 @@ const LoginPage = () => {
           setError('Unexpected response from server. Please try again.');
           return;
         }
-        localStorage.setItem(AUTH_TOKEN_KEY, accessToken);
-        localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+        setAuthSession({ accessToken, user });
         navigate(getDefaultLandingPath(user?.type), { replace: true });
       } else {
         setError('Invalid username or password');

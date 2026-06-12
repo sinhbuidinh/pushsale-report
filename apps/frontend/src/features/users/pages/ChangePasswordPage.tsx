@@ -3,10 +3,13 @@ import { useMutation } from '@tanstack/react-query';
 import { 
   Typography, Box, TextField, Button, Paper, Alert, CircularProgress 
 } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 import apiClient from '../../../shared/api/apiClient';
-import { getStoredUser } from '../../../shared/auth/authStorage';
+import { logoutSession } from '../../../shared/auth/authRefresh';
+import { getStoredUser, PANEL_PREFIX } from '../../../shared/auth/authStorage';
 
 const ChangePasswordPage = () => {
+  const navigate = useNavigate();
   const [newPassword, setNewPassword] = useState('');
   const [success, setSuccess] = useState(false);
 
@@ -14,9 +17,11 @@ const ChangePasswordPage = () => {
     mutationFn: (password: string) => {
       return apiClient.post('/auth/change-password', { newPassword: password });
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setSuccess(true);
       setNewPassword('');
+      await logoutSession();
+      navigate(`/${PANEL_PREFIX}?expired=1`, { replace: true });
     },
   });
 

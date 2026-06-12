@@ -21,6 +21,23 @@ export function getValidAuthToken(): string | null {
   return t;
 }
 
+export function setAuthSession(tokens: {
+  accessToken: string;
+  user: {
+    id?: number;
+    username?: string;
+    display_name?: string;
+    type?: string;
+  };
+}): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, tokens.accessToken);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(tokens.user));
+}
+
+export function updateAccessToken(accessToken: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, accessToken);
+}
+
 export function getStoredUser(): {
   id?: number;
   username?: string;
@@ -46,9 +63,11 @@ export function getStoredUser(): {
 export function clearAuthStorage(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
+  // Legacy key from before refresh token moved to HttpOnly cookie.
+  localStorage.removeItem('analyze_data_agent_refresh');
 }
 
-/** True only when we have a real JWT and stored user profile (avoids login ⟷ dashboard loops). */
+/** True only when we have a real JWT and stored user profile. */
 export function hasValidSession(): boolean {
   return getValidAuthToken() != null && typeof getStoredUser()?.type === 'string';
 }

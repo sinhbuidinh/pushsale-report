@@ -6,10 +6,12 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { User } from '../users/user.entity';
+import { RefreshToken } from './refresh-token.entity';
+import { getJwtAccessExpiresIn } from './jwt-config';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, RefreshToken]),
     PassportModule,
     JwtModule.registerAsync({
       useFactory: () => {
@@ -22,9 +24,7 @@ import { User } from '../users/user.entity';
         }
         return {
           secret,
-          // `expiresIn` accepts a ms-compatible string. Keep it as a literal so the
-          // typed `StringValue` union from `ms` is satisfied.
-          signOptions: { expiresIn: '1d' },
+          signOptions: { expiresIn: getJwtAccessExpiresIn() },
         };
       },
     }),

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import cookieParser from 'cookie-parser';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { FileConsoleLogger } from './common/file-console.logger';
@@ -24,6 +25,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: new FileConsoleLogger(),
   });
+  app.use(cookieParser());
   app.enableCors({
     origin: parseCorsOrigin(),
     credentials: true,
