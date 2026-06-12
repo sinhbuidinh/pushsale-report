@@ -16,8 +16,8 @@ import {
   Logout as LogoutIcon 
 } from '@mui/icons-material';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { logoutSession } from '../../auth/authRefresh';
 import {
-  clearAuthStorage,
   getStoredUser,
   PANEL_PREFIX,
 } from '../../auth/authStorage';
@@ -40,8 +40,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const userType = user.type;
 
   const handleLogout = () => {
-    clearAuthStorage();
-    navigate(`/${PANEL_PREFIX}`);
+    void logoutSession().finally(() => {
+      navigate(`/${PANEL_PREFIX}`);
+    });
   };
 
   const menuItems = [
