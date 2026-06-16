@@ -26,7 +26,9 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import apiClient from '../../../shared/api/apiClient';
+import { downloadMarketingSummaryExcel } from '../marketingSummaryExport';
 import { getStoredUser } from '../../../shared/auth/authStorage';
 import {
   BAND_THEME,
@@ -773,6 +775,15 @@ const formatMemberUnitPriceList = (
     .join('\n');
 };
 
+const exportMetricCellValue = (
+  row: MarketingSummaryRow,
+  metric: MetricDef,
+): string | number | null => {
+  const customText = metric.cellText?.(row);
+  if (customText != null) return customText;
+  return metric.value(row);
+};
+
 const renderMetricCell = (
   row: MarketingSummaryRow,
   metric: MetricDef,
@@ -960,6 +971,133 @@ const MarketingSummaryPage: React.FC = () => {
     !!startDateInput &&
     (!isRange || (!!endDateInput && endDateInput >= startDateInput));
 
+  const canExport = !!(singleData || allData) && !isFetching;
+
+  const handleExportExcel = () => {
+    if (!dateRangeLabel) return;
+
+    const metricDefs = metrics.map((m) => ({
+      key: m.key,
+      label: m.label,
+      format: m.format,
+      emphasize: m.emphasize,
+    }));
+
+    if (singleData) {
+      void downloadMarketingSummaryExcel({
+        fileNameBase: `bao-cao-ban-hang_${singleData.marketing_user_display_name}_${dateRangeLabel}`,
+        overviewHeaders: [
+          'Kỳ',
+          'Đơn đã xác nhận',
+          'Tổng đơn trong ngày',
+          'Tài khoản quảng cáo',
+          'Quảng cáo không khớp',
+        ],
+        overviewRows: [
+          {
+            cells: [
+              dateRangeLabel,
+              singleData.total_orders,
+              singleData.total_orders_created,
+              singleData.ads_account_ids.join(', ') || 'None',
+              singleData.unmatched.ads_spend,
+            ],
+          },
+        ],
+        metricDefs,
+        metricColumns: [
+          ...singleData.rows.map((row) => ({
+            header: row.item_name,
+            subheader: row.item_code,
+            quantityLabel: `SL: ${row.total_quantity}`,
+            variant: 'default' as const,
+            getValue: (metricKey: string) => {
+              const metric = metrics.find((m) => m.key === metricKey);
+              if (!metric) return null;
+              return exportMetricCellValue(row, metric);
+            },
+          })),
+          {
+            header: 'Không khớp',
+            subheader: 'product_id IS NULL',
+            quantityLabel: 'SL: —',
+            variant: 'unmatched' as const,
+            getValue: (metricKey: string) => {
+              const metric = metrics.find((m) => m.key === metricKey);
+              if (!metric) return null;
+              return metric.unmatched(singleData.unmatched);
+            },
+          },
+          {
+            header: 'TỔNG CỘNG',
+            subheader: 'tất cả sản phẩm + không khớp',
+            quantityLabel: `SL: ${singleData.totals.total_quantity}`,
+            variant: 'total' as const,
+            getValue: (metricKey: string) => {
+              const metric = metrics.find((m) => m.key === metricKey);
+              if (!metric) return null;
+              return metric.total(singleData.totals);
+            },
+          },
+        ],
+      });
+      return;
+    }
+
+    if (allData) {
+      void downloadMarketingSummaryExcel({
+        fileNameBase: `bao-cao-ban-hang_tat-ca-marketing_${dateRangeLabel}`,
+        overviewHeaders: [
+          'Marketing user',
+          'Kỳ',
+          'Đơn đã xác nhận',
+          'Tổng đơn trong ngày',
+          'Tài khoản quảng cáo',
+          'Quảng cáo không khớp',
+        ],
+        overviewRows: allData.users.map((user) => ({
+          cells: [
+            user.marketing_user_display_name,
+            dateRangeLabel,
+            user.total_orders,
+            user.total_orders_created,
+            user.ads_account_ids.join(', ') || 'None',
+            user.unmatched.ads_spend,
+          ],
+        })),
+        metricDefs,
+        metricColumns: [
+          ...allData.users.map((user) => ({
+            header: user.marketing_user_display_name,
+            subheader: 'TỔNG CỘNG',
+            quantityLabel: `SL: ${user.totals.total_quantity}`,
+            variant: 'default' as const,
+            getValue: (metricKey: string) => {
+              const metric = metrics.find((m) => m.key === metricKey);
+              if (!metric) return null;
+              return metric.total(user.totals);
+            },
+          })),
+          ...(allUsersGrandTotals
+            ? [
+                {
+                  header: 'TỔNG CỘNG',
+                  subheader: 'tất cả marketing',
+                  quantityLabel: `SL: ${allUsersGrandTotals.total_quantity}`,
+                  variant: 'total' as const,
+                  getValue: (metricKey: string) => {
+                    const metric = metrics.find((m) => m.key === metricKey);
+                    if (!metric) return null;
+                    return metric.total(allUsersGrandTotals);
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
+    }
+  };
+
   return (
     <Box>
       <Box
@@ -971,6 +1109,15 @@ const MarketingSummaryPage: React.FC = () => {
         }}
       >
         <Typography variant="h4">Báo cáo bán hàng</Typography>
+        {canExport && (
+          <Button
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExportExcel}
+          >
+            Xuất Excel
+          </Button>
+        )}
       </Box>
 
       <Paper
