@@ -25,7 +25,12 @@ import {
 } from '@sync-project/shared';
 import {
   calendarMonthBoundsForDate,
+  calendarDateInZone,
+  calendarDaysAgoInZone,
+  enumerateCalendarDates,
   getAppTimeZone,
+  isFirstCalendarDayOfMonthInZone,
+  previousCalendarMonthBoundsInZone,
   yesterdayCalendarInZone,
 } from '../common/app-timezone';
 import {
@@ -83,12 +88,12 @@ interface PushSaleOrderDetail {
 }
 
 interface PushSaleOrderPayload {
-  marketingUserId: number;
-  marketingUserName: string;
-  marketingDisplayName: string;
-  saleUserId: number;
-  saleUserName: string;
-  saleDisplayName: string;
+  marketingUserId?: number | string;
+  marketingUserName?: string;
+  marketingDisplayName?: string;
+  saleUserId?: number | string;
+  saleUserName?: string;
+  saleDisplayName?: string;
   customerPhone: string;
   customerName: string;
   customerEmail: string;
@@ -119,10 +124,112 @@ function optionalDateTimeString(
   return v.toISOString();
 }
 
+type OrderRefreshKind = 'seven_day' | 'monthly';
+
+interface FieldChange {
+  old: unknown;
+  new: unknown;
+}
+
+interface OrderProcessResult {
+  order_number: string;
+  action: 'created' | 'updated' | 'unchanged';
+  field_changes?: Record<string, FieldChange>;
+}
+
+interface OrderPageRefreshStats {
+  created_count: number;
+  updated_count: number;
+  unchanged_count: number;
+  field_changes: Array<{
+    order_number: string;
+    fields: Record<string, FieldChange>;
+  }>;
+}
+
+function normalizeDecimal(v: unknown): number {
+  if (v == null || v === '') return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function decimalsEqual(a: unknown, b: unknown): boolean {
+  return Math.abs(normalizeDecimal(a) - normalizeDecimal(b)) < 0.005;
+}
+
+function normalizeNullableString(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s.length > 0 ? s : null;
+}
+
+function simpleArrayKey(arr: readonly (number | string)[] | null | undefined): string {
+  return (arr ?? []).map(String).join(',');
+}
+
+function serializeOrderDetailsForCompare(
+  details: Array<{
+    item_code: string;
+    item_name: string;
+    quantity: number;
+    price: unknown;
+    total_price: unknown;
+  }>,
+): string {
+  return JSON.stringify(
+    [...details]
+      .map((d) => ({
+        item_code: d.item_code,
+        item_name: d.item_name,
+        quantity: Number(d.quantity ?? 0),
+        price: normalizeDecimal(d.price),
+        total_price: normalizeDecimal(d.total_price),
+      }))
+      .sort((a, b) => a.item_code.localeCompare(b.item_code)),
+  );
+}
+
+function recordFieldChange(
+  changes: Record<string, FieldChange>,
+  field: string,
+  oldVal: unknown,
+  newVal: unknown,
+): void {
+  changes[field] = { old: oldVal, new: newVal };
+}
+
+/** PushSale may send a positive user id and/or a username when staff is assigned. */
+function hasPushSaleStaff(
+  userId: number | string | undefined | null,
+  userName: string | undefined | null,
+): boolean {
+  const id = Number(userId);
+  if (Number.isFinite(id) && id > 0) {
+    return true;
+  }
+  return Boolean(userName?.trim());
+}
+
+function pushSaleStaffSnapshot(
+  userId: number | string | undefined | null,
+  userName: string | undefined | null,
+  displayName: string | undefined | null,
+): { username: string; display_name: string } | null {
+  if (!hasPushSaleStaff(userId, userName)) {
+    return null;
+  }
+  return {
+    username: userName?.trim() || '',
+    display_name: displayName?.trim() || '',
+  };
+}
+
 @Injectable()
 export class SyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SyncService.name);
   private dailyCronJob: CronJob | null = null;
+  private sevenDayRefreshCronJob: CronJob | null = null;
+  private monthlyRefreshCronJob: CronJob | null = null;
   /**
    * In-process lock: a single PushSale order sync can saturate PushSale's
    * per-token throttle, and overlapping runs against the same date corrupt
@@ -149,7 +256,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     void this.dailyCronJob?.stop();
+    void this.sevenDayRefreshCronJob?.stop();
+    void this.monthlyRefreshCronJob?.stop();
+
     const timeZone = getAppTimeZone();
+
     const cronExpression =
       process.env.SYNC_CRON_EXPRESSION?.trim() || '5 0 * * *';
     this.dailyCronJob = new CronJob(
@@ -164,6 +275,34 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       `Daily PushSale sync cron registered: "${cronExpression}" (${timeZone}).`,
     );
 
+    const sevenDayCronExpression =
+      process.env.SYNC_SEVEN_DAY_CRON_EXPRESSION?.trim() || '30 0 * * *';
+    this.sevenDayRefreshCronJob = new CronJob(
+      sevenDayCronExpression,
+      () => void this.handleSevenDayRefreshSync(),
+      null,
+      false,
+      timeZone,
+    );
+    this.sevenDayRefreshCronJob.start();
+    this.logger.log(
+      `Seven-day PushSale refresh cron registered: "${sevenDayCronExpression}" (${timeZone}).`,
+    );
+
+    const monthlyCronExpression =
+      process.env.SYNC_MONTHLY_CRON_EXPRESSION?.trim() || '45 0 1 * *';
+    this.monthlyRefreshCronJob = new CronJob(
+      monthlyCronExpression,
+      () => void this.handleMonthlyRefreshSync(),
+      null,
+      false,
+      timeZone,
+    );
+    this.monthlyRefreshCronJob.start();
+    this.logger.log(
+      `Monthly PushSale refresh cron registered: "${monthlyCronExpression}" (${timeZone}).`,
+    );
+
     // Self-heal a missed daily run (process was down at the cron's fire time):
     // on every boot, if yesterday's sync did not finish successfully, kick it off now.
     void this.catchUpMissedDailySync();
@@ -171,13 +310,59 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     void this.dailyCronJob?.stop();
+    void this.sevenDayRefreshCronJob?.stop();
+    void this.monthlyRefreshCronJob?.stop();
     this.dailyCronJob = null;
+    this.sevenDayRefreshCronJob = null;
+    this.monthlyRefreshCronJob = null;
   }
 
   handleDailySync(): void {
     this.logger.log('Starting automated daily PushSale sync...');
     this.syncOrdersFromPushSale(undefined, 1, SyncTriggerSource.Cron);
     this.logger.log('Automated daily PushSale sync dispatched.');
+  }
+
+  handleSevenDayRefreshSync(): void {
+    const timeZone = getAppTimeZone();
+    if (isFirstCalendarDayOfMonthInZone(new Date(), timeZone)) {
+      this.logger.log(
+        `Skipping seven-day PushSale refresh on ${calendarDateInZone(new Date(), timeZone)}: monthly refresh on the 1st already covers the previous month.`,
+      );
+      return;
+    }
+
+    const targetDate = calendarDaysAgoInZone(7, timeZone);
+    this.logger.log(
+      `Starting seven-day PushSale order refresh for created date ${targetDate}...`,
+    );
+    this.syncOrdersRefresh(
+      [targetDate],
+      SyncTriggerSource.CronSevenDayRefresh,
+      'seven_day',
+    );
+    this.logger.log(
+      `Seven-day PushSale order refresh for ${targetDate} dispatched.`,
+    );
+  }
+
+  handleMonthlyRefreshSync(): void {
+    const { startStr, endStr } = previousCalendarMonthBoundsInZone(
+      new Date(),
+      getAppTimeZone(),
+    );
+    const dates = enumerateCalendarDates(startStr, endStr);
+    this.logger.log(
+      `Starting monthly PushSale order refresh for ${startStr}..${endStr} (${dates.length} days)...`,
+    );
+    this.syncOrdersRefresh(
+      dates,
+      SyncTriggerSource.CronMonthlyRefresh,
+      'monthly',
+    );
+    this.logger.log(
+      `Monthly PushSale order refresh for ${startStr}..${endStr} dispatched.`,
+    );
   }
 
   /**
@@ -397,11 +582,104 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * Re-fetch orders for one or more created dates; update only when PushSale data
+   * differs from the DB and record per-field diffs in sync_log.data.
+   */
+  syncOrdersRefresh(
+    targetDates: string[],
+    triggerSource: SyncTriggerSource,
+    refreshKind: OrderRefreshKind,
+  ) {
+    if (targetDates.length === 0) {
+      return {
+        status: 'skipped',
+        dates: targetDates,
+        trigger_source: triggerSource,
+        refresh_kind: refreshKind,
+        message: 'No target dates to refresh.',
+      };
+    }
+
+    if (this.isSyncRunning) {
+      this.logger.warn(
+        `Refresh request for ${targetDates.join(', ')} (trigger=${triggerSource}) ignored: another sync is already running.`,
+      );
+      return {
+        status: 'skipped',
+        dates: targetDates,
+        trigger_source: triggerSource,
+        refresh_kind: refreshKind,
+        message:
+          'Another PushSale sync is already in progress; this request was ignored.',
+      };
+    }
+    this.isSyncRunning = true;
+
+    this.runBackgroundRefreshSync(targetDates, triggerSource, refreshKind)
+      .catch((err) =>
+        this.logger.error(
+          `Background refresh failed for ${targetDates.join(', ')}: ${httpErrorMessage(err)}`,
+        ),
+      )
+      .finally(() => {
+        this.isSyncRunning = false;
+      });
+
+    return {
+      status: 'initiated',
+      dates: targetDates,
+      trigger_source: triggerSource,
+      refresh_kind: refreshKind,
+      message: 'Refresh process started in the background.',
+    };
+  }
+
+  private async runBackgroundRefreshSync(
+    targetDates: string[],
+    triggerSource: SyncTriggerSource,
+    refreshKind: OrderRefreshKind,
+  ) {
+    const runStartedAt = Date.now();
+    let totalUpdated = 0;
+    let totalCreated = 0;
+    let totalUnchanged = 0;
+
+    try {
+      for (const dateStr of targetDates) {
+        const result = await this.runBackgroundSync(dateStr, 1, triggerSource, {
+          trackChanges: true,
+          refreshKind,
+        });
+        totalUpdated += result.updated_count;
+        totalCreated += result.created_count;
+        totalUnchanged += result.unchanged_count;
+      }
+
+      const runDur = durationPartsSince(runStartedAt);
+      this.logger.log(
+        `PushSale refresh (${refreshKind}) for ${targetDates.length} day(s) finished in ${runDur.ms} ms (${runDur.sec} s); ${totalCreated} created, ${totalUpdated} updated, ${totalUnchanged} unchanged.`,
+      );
+    } catch (error) {
+      const runDur = durationPartsSince(runStartedAt);
+      this.logger.error(
+        `PushSale refresh (${refreshKind}) failed after ${runDur.ms} ms (${runDur.sec} s): ${httpErrorMessage(error)}`,
+      );
+      throw error;
+    }
+  }
+
   private async runBackgroundSync(
     dateStr: string,
     pageBegin: number = 1,
     triggerSource: SyncTriggerSource = SyncTriggerSource.Api,
-  ) {
+    options?: { trackChanges?: boolean; refreshKind?: OrderRefreshKind },
+  ): Promise<{
+    records: number;
+    created_count: number;
+    updated_count: number;
+    unchanged_count: number;
+  }> {
     const defaultPassword = await bcrypt.hash(
       process.env.DEFAULT_USER_PASSWORD || 'ChangeMe123!',
       10,
@@ -410,6 +688,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     let pageIndex = pageBegin;
     let hasMore = true;
     let totalSynced = 0;
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalUnchanged = 0;
     const syncPagesRunStartedAt = Date.now();
 
     try {
@@ -419,8 +700,13 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           pageIndex,
           triggerSource,
           defaultPasswordHash: defaultPassword,
+          trackChanges: options?.trackChanges,
+          refreshKind: options?.refreshKind,
         });
         totalSynced += result.records;
+        totalCreated += result.created_count;
+        totalUpdated += result.updated_count;
+        totalUnchanged += result.unchanged_count;
         hasMore = result.hasMore;
         pageIndex++;
 
@@ -435,9 +721,22 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       }
 
       const runDur = durationPartsSince(syncPagesRunStartedAt);
-      this.logger.log(
-        `PushSale sync pages for ${dateStr} finished in ${runDur.ms} ms (${runDur.sec} s); ${totalSynced} orders synced.`,
-      );
+      if (options?.trackChanges) {
+        this.logger.log(
+          `PushSale refresh pages for ${dateStr} finished in ${runDur.ms} ms (${runDur.sec} s); ${totalCreated} created, ${totalUpdated} updated, ${totalUnchanged} unchanged (${totalSynced} fetched).`,
+        );
+      } else {
+        this.logger.log(
+          `PushSale sync pages for ${dateStr} finished in ${runDur.ms} ms (${runDur.sec} s); ${totalSynced} orders synced.`,
+        );
+      }
+
+      return {
+        records: totalSynced,
+        created_count: totalCreated,
+        updated_count: totalUpdated,
+        unchanged_count: totalUnchanged,
+      };
     } catch (error) {
       const runDur = durationPartsSince(syncPagesRunStartedAt);
       this.logger.error(
@@ -453,11 +752,16 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     triggerSource: SyncTriggerSource;
     defaultPasswordHash: string;
     existingLogId?: number;
+    trackChanges?: boolean;
+    refreshKind?: OrderRefreshKind;
   }): Promise<{
     records: number;
     hasMore: boolean;
     sync_log_id: number;
     page_duration_ms: number;
+    created_count: number;
+    updated_count: number;
+    unchanged_count: number;
   }> {
     const { dateStr, pageIndex, triggerSource, defaultPasswordHash } = params;
     const clientId = process.env.PUSHSALE_CLIENT_ID || '5662';
@@ -543,13 +847,38 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       const responseJson = JSON.stringify(lastResponseBody ?? null);
       const results = lastResponseBody?.result ?? [];
       let syncedCount = 0;
+      const pageRefreshStats: OrderPageRefreshStats = {
+        created_count: 0,
+        updated_count: 0,
+        unchanged_count: 0,
+        field_changes: [],
+      };
 
       for (const orderData of results) {
-        await this.processOrder(
+        const processResult = await this.processOrder(
           orderData as PushSaleOrderPayload,
           defaultPasswordHash,
+          params.trackChanges ? { trackChanges: true } : undefined,
         );
-        syncedCount++;
+        if (params.trackChanges && processResult) {
+          if (processResult.action === 'created') {
+            pageRefreshStats.created_count++;
+            syncedCount++;
+          } else if (processResult.action === 'updated') {
+            pageRefreshStats.updated_count++;
+            syncedCount++;
+            if (processResult.field_changes) {
+              pageRefreshStats.field_changes.push({
+                order_number: processResult.order_number,
+                fields: processResult.field_changes,
+              });
+            }
+          } else {
+            pageRefreshStats.unchanged_count++;
+          }
+        } else {
+          syncedCount++;
+        }
       }
 
       const pageDur = durationPartsSince(pageHandledStartedAt);
@@ -562,12 +891,23 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
           records: results.length,
           total_ms: pageDur.ms,
           request: requestBody,
+          ...(params.trackChanges
+            ? {
+                refresh_kind: params.refreshKind ?? null,
+                created_count: pageRefreshStats.created_count,
+                updated_count: pageRefreshStats.updated_count,
+                unchanged_count: pageRefreshStats.unchanged_count,
+                field_changes: pageRefreshStats.field_changes,
+              }
+            : {}),
         }),
         error_details: null,
       });
 
       this.logger.log(
-        `PushSale page ${pageIndex} for ${dateStr} handled in ${pageDur.ms} ms (${pageDur.sec} s); ${results.length} orders.`,
+        params.trackChanges
+          ? `PushSale refresh page ${pageIndex} for ${dateStr} handled in ${pageDur.ms} ms (${pageDur.sec} s); ${pageRefreshStats.created_count} created, ${pageRefreshStats.updated_count} updated, ${pageRefreshStats.unchanged_count} unchanged.`
+          : `PushSale page ${pageIndex} for ${dateStr} handled in ${pageDur.ms} ms (${pageDur.sec} s); ${results.length} orders.`,
       );
 
       return {
@@ -575,6 +915,9 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
         hasMore: results.length >= 100,
         sync_log_id: logId,
         page_duration_ms: pageDur.ms,
+        created_count: pageRefreshStats.created_count,
+        updated_count: pageRefreshStats.updated_count,
+        unchanged_count: pageRefreshStats.unchanged_count,
       };
     } catch (error) {
       const pageDur = durationPartsSince(pageHandledStartedAt);
@@ -598,28 +941,23 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   private async processOrder(
     data: PushSaleOrderPayload,
     defaultPasswordHash: string,
-  ) {
-    let marketing_user_id: number | null = null;
-    if (data.marketingUserId > 0) {
-      const u = await this.ensureUser(
-        data.marketingUserName,
-        data.marketingDisplayName,
-        'marketing',
-        defaultPasswordHash,
-      );
-      marketing_user_id = u.id;
-    }
+    options?: { trackChanges?: boolean },
+  ): Promise<OrderProcessResult | void> {
+    let marketing_user_id = await this.resolvePushSaleStaffUser(
+      data.marketingUserId,
+      data.marketingUserName,
+      data.marketingDisplayName,
+      'marketing',
+      defaultPasswordHash,
+    );
 
-    let sale_user_id: number | null = null;
-    if (data.saleUserId > 0) {
-      const u = await this.ensureUser(
-        data.saleUserName,
-        data.saleDisplayName,
-        'sale',
-        defaultPasswordHash,
-      );
-      sale_user_id = u.id;
-    }
+    let sale_user_id = await this.resolvePushSaleStaffUser(
+      data.saleUserId,
+      data.saleUserName,
+      data.saleDisplayName,
+      'sale',
+      defaultPasswordHash,
+    );
 
     let customer = await this.customerRepo.findOne({
       where: { phone: data.customerPhone },
@@ -713,42 +1051,424 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       updated_time: optionalDateTimeString(data.updateTime),
     };
 
+    const incomingDetails = (data.details || [])
+      .filter((d) => !!d.itemCode)
+      .map((d) => ({
+        item_code: d.itemCode,
+        item_name: d.itemName,
+        quantity: d.quantity ?? 0,
+        price: d.price ?? 0,
+        total_price: d.totalPrice ?? 0,
+      }));
+
     const existingOrder = await this.orderRepo.findOne({
       where: { order_number: orderPayload.order_number },
+      relations: ['customer', 'marketing_user', 'sale_user'],
     });
-    const savedOrder = existingOrder
-      ? await this.orderRepo.save({ id: existingOrder.id, ...orderPayload })
-      : await this.orderRepo.save(orderPayload);
 
-    // Replace order_details with a fresh snapshot from the PushSale payload.
-    // PushSale is the source of truth for the line items, so on every sync we
-    // drop the prior rows for this order and re-insert.
+    if (options?.trackChanges && existingOrder) {
+      const existingDetails = await this.orderDetailRepo.find({
+        where: { order: { id: existingOrder.id } },
+      });
+      const fieldChanges = this.diffOrderAgainstPayload(
+        existingOrder,
+        existingDetails,
+        orderPayload,
+        incomingDetails,
+        {
+          customer: {
+            name: data.customerName,
+            email: data.customerEmail,
+            phone: data.customerPhone,
+          },
+          marketing: pushSaleStaffSnapshot(
+            data.marketingUserId,
+            data.marketingUserName,
+            data.marketingDisplayName,
+          ),
+          sale: pushSaleStaffSnapshot(
+            data.saleUserId,
+            data.saleUserName,
+            data.saleDisplayName,
+          ),
+        },
+      );
+      if (Object.keys(fieldChanges).length === 0) {
+        return {
+          order_number: orderPayload.order_number,
+          action: 'unchanged',
+        };
+      }
+
+      await this.updateCustomerFromPushSale(orderPayload.customer.id, {
+        name: data.customerName,
+        email: data.customerEmail,
+        phone: data.customerPhone,
+        type: data.customerType || 'default',
+      });
+      if (marketing_user_id != null) {
+        await this.syncUserFromPushSale(
+          marketing_user_id,
+          data.marketingDisplayName,
+        );
+      }
+      if (sale_user_id != null) {
+        await this.syncUserFromPushSale(sale_user_id, data.saleDisplayName);
+      }
+
+      const savedOrder = await this.orderRepo.save({
+        id: existingOrder.id,
+        ...orderPayload,
+        ...this.orderStaffRelations(marketing_user_id, sale_user_id),
+      });
+      await this.replaceOrderDetails(savedOrder.id, incomingDetails);
+
+      return {
+        order_number: orderPayload.order_number,
+        action: 'updated',
+        field_changes: fieldChanges,
+      };
+    }
+
+    const savedOrder = existingOrder
+      ? await this.orderRepo.save({
+          id: existingOrder.id,
+          ...orderPayload,
+          ...this.orderStaffRelations(marketing_user_id, sale_user_id),
+        })
+      : await this.orderRepo.save({
+          ...orderPayload,
+          ...this.orderStaffRelations(marketing_user_id, sale_user_id),
+        });
+
+    await this.replaceOrderDetails(savedOrder.id, incomingDetails);
+
+    if (options?.trackChanges) {
+      return {
+        order_number: orderPayload.order_number,
+        action: 'created',
+      };
+    }
+  }
+
+  private diffOrderAgainstPayload(
+    existingOrder: Order,
+    existingDetails: OrderDetail[],
+    orderPayload: {
+      order_number: string;
+      customer: { id: number };
+      marketing_user: { id: number } | null;
+      sale_user: { id: number } | null;
+      product_adaption_ids: number[];
+      product_ids: number[];
+      item_codes: string[];
+      total_quantity: number;
+      total_amount: number;
+      total_price: number;
+      total_deposit: number;
+      total_discount: number;
+      total_shipping_cost: number;
+      total_cod: number;
+      reason_create?: string;
+      status: string | null;
+      status_name: string | null;
+      operation_result_name: string | null;
+      confirm_time?: string;
+      created_time?: string;
+      updated_time?: string;
+    },
+    incomingDetails: Array<{
+      item_code: string;
+      item_name: string;
+      quantity: number;
+      price: number;
+      total_price: number;
+    }>,
+    incomingParties: {
+      customer: { name: string; email: string; phone: string };
+      marketing: { username: string; display_name: string } | null;
+      sale: { username: string; display_name: string } | null;
+    },
+  ): Record<string, FieldChange> {
+    const changes: Record<string, FieldChange> = {};
+
+    const compareString = (
+      field: string,
+      oldVal: unknown,
+      newVal: unknown,
+    ): void => {
+      const oldNorm = normalizeNullableString(oldVal);
+      const newNorm = normalizeNullableString(newVal);
+      if (oldNorm !== newNorm) {
+        recordFieldChange(changes, field, oldNorm, newNorm);
+      }
+    };
+
+    const compareDecimal = (
+      field: string,
+      oldVal: unknown,
+      newVal: unknown,
+    ): void => {
+      if (!decimalsEqual(oldVal, newVal)) {
+        recordFieldChange(
+          changes,
+          field,
+          normalizeDecimal(oldVal),
+          normalizeDecimal(newVal),
+        );
+      }
+    };
+
+    const compareNumber = (
+      field: string,
+      oldVal: unknown,
+      newVal: unknown,
+    ): void => {
+      if (Number(oldVal ?? 0) !== Number(newVal ?? 0)) {
+        recordFieldChange(changes, field, Number(oldVal ?? 0), Number(newVal ?? 0));
+      }
+    };
+
+    const existingMarketingId = existingOrder.marketing_user?.id ?? null;
+    const incomingMarketingId = orderPayload.marketing_user?.id ?? null;
+    if (existingMarketingId !== incomingMarketingId) {
+      recordFieldChange(
+        changes,
+        'marketing_user_id',
+        existingMarketingId,
+        incomingMarketingId,
+      );
+    }
+
+    const existingSaleId = existingOrder.sale_user?.id ?? null;
+    const incomingSaleId = orderPayload.sale_user?.id ?? null;
+    if (existingSaleId !== incomingSaleId) {
+      recordFieldChange(changes, 'sale_user_id', existingSaleId, incomingSaleId);
+    }
+
+    if (existingOrder.customer?.id !== orderPayload.customer.id) {
+      recordFieldChange(
+        changes,
+        'customer_id',
+        existingOrder.customer?.id ?? null,
+        orderPayload.customer.id,
+      );
+    }
+
+    compareString(
+      'customer_name',
+      existingOrder.customer?.name,
+      incomingParties.customer.name,
+    );
+    compareString(
+      'customer_email',
+      existingOrder.customer?.email,
+      incomingParties.customer.email,
+    );
+    compareString(
+      'customer_phone',
+      existingOrder.customer?.phone,
+      incomingParties.customer.phone,
+    );
+
+    if (incomingParties.marketing != null || existingOrder.marketing_user != null) {
+      compareString(
+        'marketing_username',
+        existingOrder.marketing_user?.username,
+        incomingParties.marketing?.username,
+      );
+      compareString(
+        'marketing_display_name',
+        existingOrder.marketing_user?.display_name,
+        incomingParties.marketing?.display_name,
+      );
+    }
+
+    if (incomingParties.sale != null || existingOrder.sale_user != null) {
+      compareString(
+        'sale_username',
+        existingOrder.sale_user?.username,
+        incomingParties.sale?.username,
+      );
+      compareString(
+        'sale_display_name',
+        existingOrder.sale_user?.display_name,
+        incomingParties.sale?.display_name,
+      );
+    }
+
+    if (
+      simpleArrayKey(existingOrder.product_adaption_ids) !==
+      simpleArrayKey(orderPayload.product_adaption_ids)
+    ) {
+      recordFieldChange(
+        changes,
+        'product_adaption_ids',
+        existingOrder.product_adaption_ids ?? [],
+        orderPayload.product_adaption_ids,
+      );
+    }
+
+    if (
+      simpleArrayKey(existingOrder.product_ids) !==
+      simpleArrayKey(orderPayload.product_ids)
+    ) {
+      recordFieldChange(
+        changes,
+        'product_ids',
+        existingOrder.product_ids ?? [],
+        orderPayload.product_ids,
+      );
+    }
+
+    if (
+      simpleArrayKey(existingOrder.item_codes) !==
+      simpleArrayKey(orderPayload.item_codes)
+    ) {
+      recordFieldChange(
+        changes,
+        'item_codes',
+        existingOrder.item_codes ?? [],
+        orderPayload.item_codes,
+      );
+    }
+
+    compareNumber(
+      'total_quantity',
+      existingOrder.total_quantity,
+      orderPayload.total_quantity,
+    );
+    compareDecimal(
+      'total_amount',
+      existingOrder.total_amount,
+      orderPayload.total_amount,
+    );
+    compareDecimal(
+      'total_price',
+      existingOrder.total_price,
+      orderPayload.total_price,
+    );
+    compareDecimal(
+      'total_deposit',
+      existingOrder.total_deposit,
+      orderPayload.total_deposit,
+    );
+    compareDecimal(
+      'total_discount',
+      existingOrder.total_discount,
+      orderPayload.total_discount,
+    );
+    compareDecimal(
+      'total_shipping_cost',
+      existingOrder.total_shipping_cost,
+      orderPayload.total_shipping_cost,
+    );
+    compareDecimal('total_cod', existingOrder.total_cod, orderPayload.total_cod);
+    compareString(
+      'reason_create',
+      existingOrder.reason_create,
+      orderPayload.reason_create,
+    );
+    compareString('status', existingOrder.status, orderPayload.status);
+    compareString('status_name', existingOrder.status_name, orderPayload.status_name);
+    compareString(
+      'operation_result_name',
+      existingOrder.operation_result_name,
+      orderPayload.operation_result_name,
+    );
+    compareString(
+      'confirm_time',
+      existingOrder.confirm_time,
+      orderPayload.confirm_time,
+    );
+    compareString(
+      'created_time',
+      existingOrder.created_time,
+      orderPayload.created_time,
+    );
+    compareString(
+      'updated_time',
+      existingOrder.updated_time,
+      orderPayload.updated_time,
+    );
+
+    const existingDetailsKey = serializeOrderDetailsForCompare(existingDetails);
+    const incomingDetailsKey = serializeOrderDetailsForCompare(incomingDetails);
+    if (existingDetailsKey !== incomingDetailsKey) {
+      recordFieldChange(changes, 'order_details', existingDetails, incomingDetails);
+    }
+
+    return changes;
+  }
+
+  private async replaceOrderDetails(
+    orderId: number,
+    incomingDetails: Array<{
+      item_code: string;
+      item_name: string;
+      quantity: number;
+      price: number;
+      total_price: number;
+    }>,
+  ): Promise<void> {
     await this.orderDetailRepo
       .createQueryBuilder()
       .delete()
-      .where('order_id = :orderId', { orderId: savedOrder.id })
+      .where('order_id = :orderId', { orderId })
       .execute();
 
-    const detailRows = (data.details || [])
-      .filter((d) => !!d.itemCode)
-      .map((d) =>
-        // build instances in memory
-        this.orderDetailRepo.create({
-          order: { id: savedOrder.id } as Order,
-          item_code: d.itemCode,
-          item_name: d.itemName,
-          quantity: d.quantity ?? 0,
-          price: d.price ?? 0,
-          total_price: d.totalPrice ?? 0,
-        }),
-      );
+    const detailRows = incomingDetails.map((d) =>
+      this.orderDetailRepo.create({
+        order: { id: orderId } as Order,
+        item_code: d.item_code,
+        item_name: d.item_name,
+        quantity: d.quantity,
+        price: d.price,
+        total_price: d.total_price,
+      }),
+    );
     if (detailRows.length > 0) {
-      // one batched DB insert
       await this.orderDetailRepo.save(detailRows);
     }
   }
 
-  private async ensureUser(
+  private orderStaffRelations(
+    marketingUserId: number | null,
+    saleUserId: number | null,
+  ): {
+    marketing_user: { id: number } | null;
+    sale_user: { id: number } | null;
+  } {
+    return {
+      marketing_user: marketingUserId != null ? { id: marketingUserId } : null,
+      sale_user: saleUserId != null ? { id: saleUserId } : null,
+    };
+  }
+
+  private async resolvePushSaleStaffUser(
+    userId: number | string | undefined | null,
+    userName: string | undefined | null,
+    displayName: string | undefined | null,
+    type: 'marketing' | 'sale',
+    defaultPasswordHash: string,
+  ): Promise<number | null> {
+    if (!hasPushSaleStaff(userId, userName)) {
+      return null;
+    }
+    const username = userName?.trim();
+    if (!username) {
+      return null;
+    }
+    const user = await this.findOrCreateUser(
+      username,
+      displayName?.trim() || username,
+      type,
+      defaultPasswordHash,
+    );
+    return user.id;
+  }
+
+  private async findOrCreateUser(
     username: string,
     displayName: string,
     type: string,
@@ -764,5 +1484,71 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       });
     }
     return user;
+  }
+
+  private async syncUserFromPushSale(
+    userId: number,
+    displayName: string | undefined | null,
+  ): Promise<void> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) {
+      return;
+    }
+    const nextDisplayName = displayName?.trim() || user.display_name;
+    if (
+      normalizeNullableString(user.display_name) ===
+      normalizeNullableString(nextDisplayName)
+    ) {
+      return;
+    }
+    await this.userRepo.save({
+      id: userId,
+      display_name: nextDisplayName,
+    });
+  }
+
+  private async updateCustomerFromPushSale(
+    customerId: number,
+    incoming: {
+      name: string;
+      email: string;
+      phone: string;
+      type: string;
+    },
+  ): Promise<void> {
+    const customer = await this.customerRepo.findOne({
+      where: { id: customerId },
+    });
+    if (!customer) {
+      return;
+    }
+
+    const next = {
+      name: incoming.name?.trim() || customer.name,
+      email: incoming.email?.trim() || null,
+      phone: incoming.phone?.trim() || null,
+      type: incoming.type?.trim() || customer.type,
+    };
+
+    const changed =
+      normalizeNullableString(customer.name) !==
+        normalizeNullableString(next.name) ||
+      normalizeNullableString(customer.email) !==
+        normalizeNullableString(next.email) ||
+      normalizeNullableString(customer.phone) !==
+        normalizeNullableString(next.phone) ||
+      normalizeNullableString(customer.type) !==
+        normalizeNullableString(next.type);
+
+    if (!changed) {
+      return;
+    }
+
+    await this.customerRepo.update(customerId, {
+      name: next.name,
+      email: next.email ?? undefined,
+      phone: next.phone ?? undefined,
+      type: next.type,
+    });
   }
 }

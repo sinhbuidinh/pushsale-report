@@ -265,6 +265,12 @@ const Dashboard = () => {
     if (source === SyncTriggerSource.Cron) {
       return <Chip label="Cron" color="secondary" size="small" variant="outlined" />;
     }
+    if (source === SyncTriggerSource.CronSevenDayRefresh) {
+      return <Chip label="7-day refresh" color="secondary" size="small" variant="outlined" />;
+    }
+    if (source === SyncTriggerSource.CronMonthlyRefresh) {
+      return <Chip label="Monthly refresh" color="secondary" size="small" variant="outlined" />;
+    }
     return <Chip label="API" color="default" size="small" variant="outlined" />;
   };
 

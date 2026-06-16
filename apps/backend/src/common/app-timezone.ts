@@ -97,6 +97,64 @@ export function calendarMonthBoundsForDate(
   return { startStr, endStr, todayStr };
 }
 
+/** Calendar day `days` before today in the given zone (0 = today). */
+export function calendarDaysAgoInZone(
+  days: number,
+  timeZone: string = getAppTimeZone(),
+): string {
+  const today = calendarDateInZone(new Date(), timeZone);
+  const [y, m, d] = today.split('-').map((x) => Number(x));
+  const noonUtc = Date.UTC(y, m - 1, d, 12, 0, 0);
+  return calendarDateInZone(
+    new Date(noonUtc - days * 24 * 60 * 60 * 1000),
+    timeZone,
+  );
+}
+
+/** True when `date` falls on day 1 of the month in `timeZone`. */
+export function isFirstCalendarDayOfMonthInZone(
+  date: Date = new Date(),
+  timeZone: string = getAppTimeZone(),
+): boolean {
+  const todayStr = calendarDateInZone(date, timeZone);
+  const day = parseInt(todayStr.split('-')[2], 10);
+  return day === 1;
+}
+
+/** First and last calendar day (YYYY-MM-DD) of the month before `date` in `timeZone`. */
+export function previousCalendarMonthBoundsInZone(
+  date: Date = new Date(),
+  timeZone: string = getAppTimeZone(),
+): { startStr: string; endStr: string } {
+  const todayStr = calendarDateInZone(date, timeZone);
+  const [ys, ms] = todayStr.split('-');
+  const y = parseInt(ys, 10);
+  const mo = parseInt(ms, 10);
+  const prevMo = mo === 1 ? 12 : mo - 1;
+  const prevY = mo === 1 ? y - 1 : y;
+  const lastDay = new Date(prevY, prevMo, 0).getDate();
+  const startStr = `${prevY}-${String(prevMo).padStart(2, '0')}-01`;
+  const endStr = `${prevY}-${String(prevMo).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  return { startStr, endStr };
+}
+
+/** Inclusive list of YYYY-MM-DD from `startStr` through `endStr`. */
+export function enumerateCalendarDates(
+  startStr: string,
+  endStr: string,
+): string[] {
+  if (!YMD_RE.test(startStr) || !YMD_RE.test(endStr)) {
+    throw new Error('Invalid date format. Expected YYYY-MM-DD.');
+  }
+  const dates: string[] = [];
+  let cur = startStr;
+  while (cur <= endStr) {
+    dates.push(cur);
+    cur = addOneCivilDay(cur);
+  }
+  return dates;
+}
+
 /** Previous calendar day in the given zone (for default sync target). */
 export function yesterdayCalendarInZone(
   timeZone: string = getAppTimeZone(),
