@@ -159,11 +159,23 @@ function decimalsEqual(a: unknown, b: unknown): boolean {
 
 function normalizeNullableString(v: unknown): string | null {
   if (v == null) return null;
-  const s = String(v).trim();
-  return s.length > 0 ? s : null;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    return s.length > 0 ? s : null;
+  }
+  if (
+    typeof v === 'number' ||
+    typeof v === 'boolean' ||
+    typeof v === 'bigint'
+  ) {
+    return String(v);
+  }
+  return null;
 }
 
-function simpleArrayKey(arr: readonly (number | string)[] | null | undefined): string {
+function simpleArrayKey(
+  arr: readonly (number | string)[] | null | undefined,
+): string {
   return (arr ?? []).map(String).join(',');
 }
 
@@ -943,7 +955,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     defaultPasswordHash: string,
     options?: { trackChanges?: boolean },
   ): Promise<OrderProcessResult | void> {
-    let marketing_user_id = await this.resolvePushSaleStaffUser(
+    const marketing_user_id = await this.resolvePushSaleStaffUser(
       data.marketingUserId,
       data.marketingUserName,
       data.marketingDisplayName,
@@ -951,7 +963,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       defaultPasswordHash,
     );
 
-    let sale_user_id = await this.resolvePushSaleStaffUser(
+    const sale_user_id = await this.resolvePushSaleStaffUser(
       data.saleUserId,
       data.saleUserName,
       data.saleDisplayName,
@@ -1225,7 +1237,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       newVal: unknown,
     ): void => {
       if (Number(oldVal ?? 0) !== Number(newVal ?? 0)) {
-        recordFieldChange(changes, field, Number(oldVal ?? 0), Number(newVal ?? 0));
+        recordFieldChange(
+          changes,
+          field,
+          Number(oldVal ?? 0),
+          Number(newVal ?? 0),
+        );
       }
     };
 
@@ -1243,7 +1260,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const existingSaleId = existingOrder.sale_user?.id ?? null;
     const incomingSaleId = orderPayload.sale_user?.id ?? null;
     if (existingSaleId !== incomingSaleId) {
-      recordFieldChange(changes, 'sale_user_id', existingSaleId, incomingSaleId);
+      recordFieldChange(
+        changes,
+        'sale_user_id',
+        existingSaleId,
+        incomingSaleId,
+      );
     }
 
     if (existingOrder.customer?.id !== orderPayload.customer.id) {
@@ -1271,7 +1293,10 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       incomingParties.customer.phone,
     );
 
-    if (incomingParties.marketing != null || existingOrder.marketing_user != null) {
+    if (
+      incomingParties.marketing != null ||
+      existingOrder.marketing_user != null
+    ) {
       compareString(
         'marketing_username',
         existingOrder.marketing_user?.username,
@@ -1363,14 +1388,22 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
       existingOrder.total_shipping_cost,
       orderPayload.total_shipping_cost,
     );
-    compareDecimal('total_cod', existingOrder.total_cod, orderPayload.total_cod);
+    compareDecimal(
+      'total_cod',
+      existingOrder.total_cod,
+      orderPayload.total_cod,
+    );
     compareString(
       'reason_create',
       existingOrder.reason_create,
       orderPayload.reason_create,
     );
     compareString('status', existingOrder.status, orderPayload.status);
-    compareString('status_name', existingOrder.status_name, orderPayload.status_name);
+    compareString(
+      'status_name',
+      existingOrder.status_name,
+      orderPayload.status_name,
+    );
     compareString(
       'operation_result_name',
       existingOrder.operation_result_name,
@@ -1395,7 +1428,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     const existingDetailsKey = serializeOrderDetailsForCompare(existingDetails);
     const incomingDetailsKey = serializeOrderDetailsForCompare(incomingDetails);
     if (existingDetailsKey !== incomingDetailsKey) {
-      recordFieldChange(changes, 'order_details', existingDetails, incomingDetails);
+      recordFieldChange(
+        changes,
+        'order_details',
+        existingDetails,
+        incomingDetails,
+      );
     }
 
     return changes;
