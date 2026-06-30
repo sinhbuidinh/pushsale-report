@@ -11,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import { In, Repository } from 'typeorm';
+import { isCronEnabled } from '../common/enable-cron';
 import {
   getAppTimeZone,
   yesterdayCalendarInZone,
@@ -124,6 +125,13 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     void this.dailyFacebookAdsCronJob?.stop();
+
+    if (!isCronEnabled()) {
+      this.logger.log('Cron is disabled (ENABLE_CRON=false).');
+      void this.catchUpMissedDailyFacebookAdsSync();
+      return;
+    }
+
     const timeZone = getAppTimeZone();
     const cronExpression =
       process.env.FACEBOOK_ADS_SYNC_CRON_EXPRESSION?.trim() || '15 0 * * *';

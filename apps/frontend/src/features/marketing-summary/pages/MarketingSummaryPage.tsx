@@ -111,6 +111,7 @@ interface MarketingSummaryResponse {
   marketing_user_display_name: string;
   start_date: string;
   end_date: string;
+  summary_mode: MarketingSummaryMode;
   ads_account_ids: string[];
   total_orders: number;
   total_orders_created: number;
@@ -132,8 +133,32 @@ interface MarketingSummaryAllUser {
 interface MarketingSummaryAllResponse {
   start_date: string;
   end_date: string;
+  summary_mode: MarketingSummaryMode;
   users: MarketingSummaryAllUser[];
 }
+
+type MarketingSummaryMode = 'confirmed' | 'delivered';
+
+const SUMMARY_MODE_OPTIONS: { value: MarketingSummaryMode; label: string }[] = [
+  { value: 'confirmed', label: 'Đã xác nhận' },
+  { value: 'delivered', label: 'Đã giao hàng / Đã thanh toán' },
+];
+
+const summaryModeLabel = (mode: MarketingSummaryMode): string =>
+  SUMMARY_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode;
+
+const summaryModeFileSuffix = (mode: MarketingSummaryMode): string =>
+  mode === 'delivered' ? 'da-giao-hang' : 'da-xac-nhan';
+
+const ordersCountLabel = (mode: MarketingSummaryMode): string =>
+  mode === 'delivered'
+    ? 'Đơn đã giao / đã thanh toán'
+    : 'Đơn đã xác nhận';
+
+const ordersCountTooltip = (mode: MarketingSummaryMode): string =>
+  mode === 'delivered'
+    ? 'Đơn đã xác nhận với trạng thái Đã giao hàng hoặc Đã thanh toán, được tạo trong kỳ (theo ngày tạo đơn).'
+    : 'Đơn đã xác nhận được tạo trong kỳ (theo ngày tạo đơn).';
 
 /** Select value that loads combined totals for every marketing user. */
 const ALL_MARKETING_USERS = 'all';
@@ -832,6 +857,8 @@ const MarketingSummaryPage: React.FC = () => {
   const [marketingUserInput, setMarketingUserInput] = useState<string>(
     fixedMarketingUserId,
   );
+  const [summaryModeInput, setSummaryModeInput] =
+    useState<MarketingSummaryMode>('confirmed');
   const [isRange, setIsRange] = useState(false);
   const [startDateInput, setStartDateInput] = useState<string>(todayYmd());
   const [endDateInput, setEndDateInput] = useState<string>(todayYmd());
@@ -857,6 +884,7 @@ const MarketingSummaryPage: React.FC = () => {
     marketingUserId: string;
     startDate: string;
     endDate: string;
+    summaryMode: MarketingSummaryMode;
   } | null>(null);
 
   const { data: filterUsers, isLoading: loadingUsers } =
@@ -906,6 +934,7 @@ const MarketingSummaryPage: React.FC = () => {
       submitted?.marketingUserId,
       submitted?.startDate,
       submitted?.endDate,
+      submitted?.summaryMode,
     ],
     queryFn: async () => {
       if (!submitted) throw new Error('No selection');
@@ -913,6 +942,7 @@ const MarketingSummaryPage: React.FC = () => {
       params.set('marketing_user_id', submitted.marketingUserId);
       params.set('start_date', submitted.startDate);
       params.set('end_date', submitted.endDate);
+      params.set('summary_mode', submitted.summaryMode);
       const response = await apiClient.get(
         `/marketing-summary?${params.toString()}`,
       );
@@ -938,6 +968,9 @@ const MarketingSummaryPage: React.FC = () => {
     return aggregateAllUserTotals(allData.users);
   }, [allData]);
 
+  const activeSummaryMode: MarketingSummaryMode | null =
+    singleData?.summary_mode ?? allData?.summary_mode ?? null;
+
   const handleSummarize = () => {
     if (!marketingUserInput) return;
     if (!startDateInput) return;
@@ -945,11 +978,13 @@ const MarketingSummaryPage: React.FC = () => {
       marketingUserId: marketingUserInput,
       startDate: startDateInput,
       endDate: isRange ? endDateInput || startDateInput : startDateInput,
+      summaryMode: summaryModeInput,
     });
   };
 
   const handleClear = () => {
     setMarketingUserInput(fixedMarketingUserId);
+    setSummaryModeInput('confirmed');
     setIsRange(false);
     const t = todayYmd();
     setStartDateInput(t);
@@ -983,12 +1018,16 @@ const MarketingSummaryPage: React.FC = () => {
       emphasize: m.emphasize,
     }));
 
+    const exportMode = activeSummaryMode ?? 'confirmed';
+    const modeSuffix = summaryModeFileSuffix(exportMode);
+    const ordersHeader = ordersCountLabel(exportMode);
+
     if (singleData) {
       void downloadMarketingSummaryExcel({
-        fileNameBase: `bao-cao-ban-hang_${singleData.marketing_user_display_name}_${dateRangeLabel}`,
+        fileNameBase: `bao-cao-ban-hang_${modeSuffix}_${singleData.marketing_user_display_name}_${dateRangeLabel}`,
         overviewHeaders: [
           'Kỳ',
-          'Đơn đã xác nhận',
+          ordersHeader,
           'Tổng đơn trong ngày',
           'Tài khoản quảng cáo',
           'Quảng cáo không khớp',
@@ -1046,11 +1085,11 @@ const MarketingSummaryPage: React.FC = () => {
 
     if (allData) {
       void downloadMarketingSummaryExcel({
-        fileNameBase: `bao-cao-ban-hang_tat-ca-marketing_${dateRangeLabel}`,
+        fileNameBase: `bao-cao-ban-hang_${modeSuffix}_tat-ca-marketing_${dateRangeLabel}`,
         overviewHeaders: [
           'Marketing user',
           'Kỳ',
-          'Đơn đã xác nhận',
+          ordersHeader,
           'Tổng đơn trong ngày',
           'Tài khoản quảng cáo',
           'Quảng cáo không khớp',
@@ -1105,10 +1144,19 @@ const MarketingSummaryPage: React.FC = () => {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          mb: 2,
+          mb: activeSummaryMode ? 1 : 2,
         }}
       >
-        <Typography variant="h4">Báo cáo bán hàng</Typography>
+        <Box>
+          <Typography variant="h4">Báo cáo bán hàng</Typography>
+          {activeSummaryMode && (
+            <Chip
+              size="small"
+              label={summaryModeLabel(activeSummaryMode)}
+              sx={{ mt: 1 }}
+            />
+          )}
+        </Box>
         {canExport && (
           <Button
             variant="outlined"
@@ -1153,6 +1201,24 @@ const MarketingSummaryPage: React.FC = () => {
             </Select>
           </FormControl>
         )}
+
+        <FormControl size="small" sx={{ minWidth: 260 }}>
+          <InputLabel>Loại đơn hàng</InputLabel>
+          <Select
+            label="Loại đơn hàng"
+            value={summaryModeInput}
+            onChange={(e) =>
+              setSummaryModeInput(e.target.value as MarketingSummaryMode)
+            }
+            sx={{ bgcolor: 'action.hover' }}
+          >
+            {SUMMARY_MODE_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
 
         <FormControl size="small" sx={{ minWidth: 170 }}>
           <InputLabel>Chọn nhanh ngày</InputLabel>
@@ -1389,8 +1455,14 @@ const MarketingSummaryPage: React.FC = () => {
                   <TableCell sx={{ fontWeight: 700 }}>Marketing user</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Kỳ</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    <Tooltip title="Đơn đã xác nhận được tạo trong kỳ (theo ngày tạo đơn).">
-                      <span>Đơn đã xác nhận</span>
+                    <Tooltip
+                      title={ordersCountTooltip(
+                        activeSummaryMode ?? 'confirmed',
+                      )}
+                    >
+                      <span>
+                        {ordersCountLabel(activeSummaryMode ?? 'confirmed')}
+                      </span>
                     </Tooltip>
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
@@ -1707,8 +1779,14 @@ const MarketingSummaryPage: React.FC = () => {
                 <TableRow>
                   <TableCell sx={{ fontWeight: 700 }}>Kỳ</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>
-                    <Tooltip title="Đơn đã xác nhận được tạo trong kỳ (theo ngày tạo đơn).">
-                      <span>Đơn đã xác nhận</span>
+                    <Tooltip
+                      title={ordersCountTooltip(
+                        activeSummaryMode ?? 'confirmed',
+                      )}
+                    >
+                      <span>
+                        {ordersCountLabel(activeSummaryMode ?? 'confirmed')}
+                      </span>
                     </Tooltip>
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>

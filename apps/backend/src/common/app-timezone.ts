@@ -111,14 +111,22 @@ export function calendarDaysAgoInZone(
   );
 }
 
-/** True when `date` falls on day 1 of the month in `timeZone`. */
-export function isFirstCalendarDayOfMonthInZone(
+/** Calendar day of month (1–31) for `date` in `timeZone`. */
+export function calendarDayOfMonthInZone(
+  date: Date = new Date(),
+  timeZone: string = getAppTimeZone(),
+): number {
+  const todayStr = calendarDateInZone(date, timeZone);
+  return parseInt(todayStr.split('-')[2], 10);
+}
+
+/** True when `date` falls on `dayOfMonth` in `timeZone`. */
+export function isCalendarDayOfMonthInZone(
+  dayOfMonth: number,
   date: Date = new Date(),
   timeZone: string = getAppTimeZone(),
 ): boolean {
-  const todayStr = calendarDateInZone(date, timeZone);
-  const day = parseInt(todayStr.split('-')[2], 10);
-  return day === 1;
+  return calendarDayOfMonthInZone(date, timeZone) === dayOfMonth;
 }
 
 /** First and last calendar day (YYYY-MM-DD) of the month before `date` in `timeZone`. */

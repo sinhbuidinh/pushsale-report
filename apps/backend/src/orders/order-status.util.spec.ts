@@ -13,6 +13,12 @@ describe('resolveOrderStatusFromPushSale', () => {
     expect(resolveOrderStatusFromPushSale('Đang giao hàng')).toBe(
       OrderStatus.DangGiaoHang,
     );
+    expect(resolveOrderStatusFromPushSale('Đã giao hàng')).toBe(
+      OrderStatus.DaGiaoHang,
+    );
+    expect(resolveOrderStatusFromPushSale('Đã thanh toán')).toBe(
+      OrderStatus.DaThanhToan,
+    );
     expect(resolveOrderStatusFromPushSale('Đã đăng')).toBe(OrderStatus.DaDang);
     expect(resolveOrderStatusFromPushSale('Chờ chốt đơn')).toBe(
       OrderStatus.ChoChotDon,

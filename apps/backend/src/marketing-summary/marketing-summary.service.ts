@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { DELIVERED_OR_PAID_ORDER_STATUSES } from '@sync-project/shared';
 import { In, Repository } from 'typeorm';
 import { Order } from '../orders/order.entity';
 import { OrderDetail } from '../orders/order-detail.entity';
@@ -23,10 +24,20 @@ interface OrderDetailLine {
   quantity: number;
 }
 
+export type MarketingSummaryMode = 'confirmed' | 'delivered';
+
 export interface MarketingSummaryQuery {
   marketing_user_id: number;
   start_date: string;
   end_date: string;
+  summary_mode?: MarketingSummaryMode;
+}
+
+interface ValidatedMarketingSummaryQuery {
+  marketing_user_id: number;
+  start_date: string;
+  end_date: string;
+  summary_mode: MarketingSummaryMode;
 }
 
 export interface MarketingSummaryMemberUnitPrice {
@@ -116,6 +127,7 @@ export interface MarketingSummaryResponse {
   marketing_user_display_name: string;
   start_date: string;
   end_date: string;
+  summary_mode: MarketingSummaryMode;
   ads_account_ids: string[];
   /** Confirmed orders (total_quantity &gt; 0) whose created date falls in the range. */
   total_orders: number;
@@ -141,6 +153,7 @@ export interface MarketingSummaryAllUserEntry {
 export interface MarketingSummaryAllResponse {
   start_date: string;
   end_date: string;
+  summary_mode: MarketingSummaryMode;
   users: MarketingSummaryAllUserEntry[];
 }
 
@@ -164,7 +177,8 @@ export class MarketingSummaryService {
   ) {}
 
   async summarize(q: MarketingSummaryQuery): Promise<MarketingSummaryResponse> {
-    const { marketing_user_id, start_date, end_date } = this.validateQuery(q);
+    const { marketing_user_id, start_date, end_date, summary_mode } =
+      this.validateQuery(q);
 
     const marketing = await this.userRepo.findOne({
       where: { id: marketing_user_id, type: 'marketing' },
@@ -177,7 +191,12 @@ export class MarketingSummaryService {
     }
 
     const [orders, total_orders_created] = await Promise.all([
-      this.findConfirmedOrders(marketing_user_id, start_date, end_date),
+      this.findConfirmedOrders(
+        marketing_user_id,
+        start_date,
+        end_date,
+        summary_mode,
+      ),
       this.countCreatedOrders(marketing_user_id, start_date, end_date),
     ]);
     const productAggregates = await this.computeProductAggregates(orders);
@@ -229,6 +248,7 @@ export class MarketingSummaryService {
       marketing_user_display_name: marketing.display_name,
       start_date,
       end_date,
+      summary_mode,
       ads_account_ids: adsAccountIds,
       total_orders: orders.length,
       total_orders_created,
@@ -245,11 +265,13 @@ export class MarketingSummaryService {
   async summarizeAll(
     start_date: string,
     end_date: string,
+    summary_mode: MarketingSummaryMode = 'confirmed',
   ): Promise<MarketingSummaryAllResponse> {
     const { start_date: start, end_date: end } = this.validateDateRange(
       start_date,
       end_date,
     );
+    const mode = this.validateSummaryMode(summary_mode);
 
     const marketers = await this.userRepo.find({
       where: { type: 'marketing' },
@@ -263,6 +285,7 @@ export class MarketingSummaryService {
           marketing_user_id: m.id,
           start_date: start,
           end_date: end,
+          summary_mode: mode,
         });
         return {
           marketing_user_id: summary.marketing_user_id,
@@ -278,10 +301,20 @@ export class MarketingSummaryService {
 
     users.sort((a, b) => b.totals.profit - a.totals.profit);
 
-    return { start_date: start, end_date: end, users };
+    return { start_date: start, end_date: end, summary_mode: mode, users };
   }
 
-  private validateQuery(q: MarketingSummaryQuery): MarketingSummaryQuery {
+  private validateSummaryMode(mode: string | undefined): MarketingSummaryMode {
+    const normalized = String(mode || 'confirmed').trim().toLowerCase();
+    if (normalized === 'confirmed' || normalized === 'delivered') {
+      return normalized;
+    }
+    throw new BadRequestException(
+      'summary_mode must be "confirmed" or "delivered"',
+    );
+  }
+
+  private validateQuery(q: MarketingSummaryQuery): ValidatedMarketingSummaryQuery {
     const marketing_user_id = Number(q.marketing_user_id);
     if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
       throw new BadRequestException(
@@ -292,7 +325,8 @@ export class MarketingSummaryService {
       q.start_date,
       q.end_date,
     );
-    return { marketing_user_id, start_date, end_date };
+    const summary_mode = this.validateSummaryMode(q.summary_mode);
+    return { marketing_user_id, start_date, end_date, summary_mode };
   }
 
   private validateDateRange(
@@ -322,8 +356,9 @@ export class MarketingSummaryService {
     marketingUserId: number,
     startDate: string,
     endDate: string,
+    summaryMode: MarketingSummaryMode = 'confirmed',
   ): Promise<Order[]> {
-    return this.orderRepo
+    const qb = this.orderRepo
       .createQueryBuilder('o')
       .where('o.marketing_user_id = :uid', { uid: marketingUserId })
       .andWhere('o.total_quantity > 0')
@@ -332,8 +367,15 @@ export class MarketingSummaryService {
       .andWhere(
         'SUBSTRING(o.created_time, 1, 10) BETWEEN :startDate AND :endDate',
         { startDate, endDate },
-      )
-      .getMany();
+      );
+
+    if (summaryMode === 'delivered') {
+      qb.andWhere('o.status IN (:...statuses)', {
+        statuses: DELIVERED_OR_PAID_ORDER_STATUSES,
+      });
+    }
+
+    return qb.getMany();
   }
 
   /**
