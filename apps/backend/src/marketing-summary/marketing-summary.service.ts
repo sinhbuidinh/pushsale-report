@@ -317,7 +317,7 @@ export class MarketingSummaryService {
   }
 
   private validateQuery(
-    q: MarketingSummaryQuery
+    q: MarketingSummaryQuery,
   ): ValidatedMarketingSummaryQuery {
     const marketing_user_id = Number(q.marketing_user_id);
     if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
