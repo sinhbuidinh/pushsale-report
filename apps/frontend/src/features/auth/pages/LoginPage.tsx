@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   Box, 
@@ -22,6 +22,10 @@ const LoginPage = () => {
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    document.title = "HungViet Panel";
+  }, []);
   const sessionExpired = useMemo(
     () => new URLSearchParams(location.search).get('expired') === '1',
     [location.search],
