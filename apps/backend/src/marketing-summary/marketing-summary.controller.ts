@@ -39,6 +39,7 @@ export class MarketingSummaryController {
     @Query('marketing_user_id') marketingUserIdStr: string = '',
     @Query('start_date') startDate: string = '',
     @Query('end_date') endDate: string = '',
+    @Query('summary_mode') summaryMode: string = 'confirmed',
   ) {
     try {
       const caller = req.user as JwtRequestUser | undefined;
@@ -54,18 +55,25 @@ export class MarketingSummaryController {
         );
       }
 
+      const mode = String(summaryMode || 'confirmed').trim();
+
       if (caller.type === 'marketing') {
         const data = await this.service.summarize({
           marketing_user_id: caller.sub,
           start_date: start,
           end_date: end,
+          summary_mode: mode as 'confirmed' | 'delivered',
         });
         return { status: true, data };
       }
 
       const idParam = String(marketingUserIdStr).trim().toLowerCase();
       if (idParam === 'all') {
-        const data = await this.service.summarizeAll(start, end);
+        const data = await this.service.summarizeAll(
+          start,
+          end,
+          mode as 'confirmed' | 'delivered',
+        );
         return { status: true, data };
       }
 
@@ -80,6 +88,7 @@ export class MarketingSummaryController {
         marketing_user_id,
         start_date: start,
         end_date: end,
+        summary_mode: mode as 'confirmed' | 'delivered',
       });
       return { status: true, data };
     } catch (error) {

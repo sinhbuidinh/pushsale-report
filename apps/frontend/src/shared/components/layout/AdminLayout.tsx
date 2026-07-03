@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { 
   Box, Drawer, AppBar, Toolbar, List, Typography, 
   ListItem, ListItemButton, ListItemIcon, ListItemText, 
@@ -32,6 +32,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const user = getStoredUser();
   const navigate = useNavigate();
   const location = useLocation();
+
+  useEffect(() => {
+    document.title = "HungViet Panel";
+  }, []);
 
   if (!user?.type || typeof user.type !== 'string') {
     return <Navigate to={`/${PANEL_PREFIX}`} replace />;

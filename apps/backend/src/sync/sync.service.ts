@@ -29,7 +29,7 @@ import {
   calendarDaysAgoInZone,
   enumerateCalendarDates,
   getAppTimeZone,
-  isFirstCalendarDayOfMonthInZone,
+  isCalendarDayOfMonthInZone,
   previousCalendarMonthBoundsInZone,
   yesterdayCalendarInZone,
 } from '../common/app-timezone';
@@ -38,6 +38,7 @@ import {
   isRetryableHttpError,
 } from '../common/http-error.util';
 import { HttpRetryService } from '../common/http-retry.service';
+import { isCronEnabled } from '../common/enable-cron';
 import { PUSHSALE_REQUEST_INTERVAL_MS } from '../common/pushsale-request-interval';
 import {
   durationPartsFromMs,
@@ -125,6 +126,9 @@ function optionalDateTimeString(
 }
 
 type OrderRefreshKind = 'seven_day' | 'monthly';
+
+/** Must match the day-of-month in the default `SYNC_MONTHLY_CRON_EXPRESSION`. */
+const MONTHLY_REFRESH_DAY_OF_MONTH = 15;
 
 interface FieldChange {
   old: unknown;
@@ -271,6 +275,12 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     void this.sevenDayRefreshCronJob?.stop();
     void this.monthlyRefreshCronJob?.stop();
 
+    if (!isCronEnabled()) {
+      this.logger.log('Cron is disabled (ENABLE_CRON=false).');
+      void this.catchUpMissedDailySync();
+      return;
+    }
+
     const timeZone = getAppTimeZone();
 
     const cronExpression =
@@ -302,7 +312,7 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
     );
 
     const monthlyCronExpression =
-      process.env.SYNC_MONTHLY_CRON_EXPRESSION?.trim() || '45 0 1 * *';
+      process.env.SYNC_MONTHLY_CRON_EXPRESSION?.trim() || '45 0 15 * *';
     this.monthlyRefreshCronJob = new CronJob(
       monthlyCronExpression,
       () => void this.handleMonthlyRefreshSync(),
@@ -337,9 +347,15 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
 
   handleSevenDayRefreshSync(): void {
     const timeZone = getAppTimeZone();
-    if (isFirstCalendarDayOfMonthInZone(new Date(), timeZone)) {
+    if (
+      isCalendarDayOfMonthInZone(
+        MONTHLY_REFRESH_DAY_OF_MONTH,
+        new Date(),
+        timeZone,
+      )
+    ) {
       this.logger.log(
-        `Skipping seven-day PushSale refresh on ${calendarDateInZone(new Date(), timeZone)}: monthly refresh on the 1st already covers the previous month.`,
+        `Skipping seven-day PushSale refresh on ${calendarDateInZone(new Date(), timeZone)}: monthly refresh on day ${MONTHLY_REFRESH_DAY_OF_MONTH} already covers the previous month.`,
       );
       return;
     }

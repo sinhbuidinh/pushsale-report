@@ -201,6 +201,10 @@ const LandingProductSlider = memo(function LandingProductSlider({
 const CompanyLandingPageComponent = () => {
   const { t, i18n } = useTranslation();
 
+  useEffect(() => {
+    document.title = "HungViet";
+  }, []);
+
   const productItems = useMemo(() => [
     t("landing:productItems.lighting"),
     t("landing:productItems.security"),
