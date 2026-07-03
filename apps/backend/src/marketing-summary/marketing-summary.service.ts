@@ -305,7 +305,9 @@ export class MarketingSummaryService {
   }
 
   private validateSummaryMode(mode: string | undefined): MarketingSummaryMode {
-    const normalized = String(mode || 'confirmed').trim().toLowerCase();
+    const normalized = String(mode || 'confirmed')
+      .trim()
+      .toLowerCase();
     if (normalized === 'confirmed' || normalized === 'delivered') {
       return normalized;
     }
@@ -314,7 +316,9 @@ export class MarketingSummaryService {
     );
   }
 
-  private validateQuery(q: MarketingSummaryQuery): ValidatedMarketingSummaryQuery {
+  private validateQuery(
+    q: MarketingSummaryQuery
+  ): ValidatedMarketingSummaryQuery {
     const marketing_user_id = Number(q.marketing_user_id);
     if (!Number.isFinite(marketing_user_id) || marketing_user_id <= 0) {
       throw new BadRequestException(

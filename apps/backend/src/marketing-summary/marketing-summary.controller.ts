@@ -69,7 +69,11 @@ export class MarketingSummaryController {
 
       const idParam = String(marketingUserIdStr).trim().toLowerCase();
       if (idParam === 'all') {
-        const data = await this.service.summarizeAll(start, end, mode as 'confirmed' | 'delivered');
+        const data = await this.service.summarizeAll(
+          start,
+          end,
+          mode as 'confirmed' | 'delivered',
+        );
         return { status: true, data };
       }
 

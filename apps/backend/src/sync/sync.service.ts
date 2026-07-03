@@ -348,7 +348,11 @@ export class SyncService implements OnModuleInit, OnModuleDestroy {
   handleSevenDayRefreshSync(): void {
     const timeZone = getAppTimeZone();
     if (
-      isCalendarDayOfMonthInZone(MONTHLY_REFRESH_DAY_OF_MONTH, new Date(), timeZone)
+      isCalendarDayOfMonthInZone(
+        MONTHLY_REFRESH_DAY_OF_MONTH,
+        new Date(),
+        timeZone,
+      )
     ) {
       this.logger.log(
         `Skipping seven-day PushSale refresh on ${calendarDateInZone(new Date(), timeZone)}: monthly refresh on day ${MONTHLY_REFRESH_DAY_OF_MONTH} already covers the previous month.`,
