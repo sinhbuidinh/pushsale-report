@@ -27,6 +27,7 @@ import {
   aggregateSpendByProduct,
   formatUnmatchedCampaignNotes,
 } from './facebook-ads-spend-aggregate.util';
+import { AxiosError } from 'axios';
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION?.trim() || 'v23.0';
@@ -76,6 +77,18 @@ interface FacebookInsightsResponse {
     next?: string;
   };
 }
+
+interface FacebookErrorResponse {
+  error: {
+    message: string;
+    type: string;
+    code: number;
+    error_subcode?: number;
+    fbtrace_id: string;
+  };
+}
+
+type FacebookInsightsLogData = (FacebookAdInsight|{ error: string })[];
 
 export interface FacebookCampaign {
   id?: string;
@@ -679,7 +692,7 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     );
 
     this.logger.log(
-      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insights.length} ads, ${result.mapped_products_count} mapped products, total spend ${result.total_spend.toFixed(2)} ${result.currency}`,
+      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insights.length} ads, ${result.mapped_products_count ?? 0} mapped products, total spend ${result.total_spend?.toFixed(2) ?? '0.00'} ${result.currency ?? 'VND'}`,
     );
 
     return {
@@ -695,10 +708,27 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
   private async persistDailyCostsFromInsights(
     syncDate: string,
     adAccountId: string,
-    insights: FacebookAdInsight[],
+    insights: FacebookInsightsLogData,
   ) {
+    const insightsData = insights.filter((row) => 'error' in row) as FacebookAdInsight[];
+    if (insightsData.length === 0) {
+      this.logger.error(`No insights data found for ${syncDate} on ${adAccountId}`);
+
+      return {
+        sync_date: syncDate,
+        ad_account_id: adAccountId,
+        fetched_ads_count: 0,
+        rows_persisted: 0,
+        mapped_products_count: 0,
+        unmapped_spend: 0,
+        total_spend: 0,
+        currency: 'VND',
+        rows: [],
+      };
+    }
+
     // Step-1: Collect distinct item_code keys from insights.
-    const itemCodeKeys = this.collectDistinctItemCodeKeysFromInsights(insights);
+    const itemCodeKeys = this.collectDistinctItemCodeKeysFromInsights(insightsData);
 
     // Step-2: Find products by item_code keys.
     const products = await this.findProductsByItemCodeKeys(itemCodeKeys);
@@ -707,10 +737,10 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     const matcherByItemCodeKey = this.buildMatcherMapByItemCodeKey(products);
 
     // Step-4: Aggregate spend into buckets per product and one bucket for ads that matched nothing;
-    const buckets = aggregateSpendByProduct(insights, matcherByItemCodeKey);
+    const buckets = aggregateSpendByProduct(insightsData, matcherByItemCodeKey);
 
     const currency =
-      insights.find((row) => row.account_currency)?.account_currency || 'VND';
+      insightsData.find((row) => row.account_currency)?.account_currency || 'VND';
 
     // Step-5: Map buckets to DB rows, delete existing rows for this sync_date + ad_account_id, then save (full replace for idempotency);
     const payload = buckets.map((bucket) => ({
@@ -750,13 +780,13 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
       .reduce((sum, row) => sum + Number(row.spend), 0);
 
     this.logger.log(
-      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insights.length} ads, ${mappedRows.length} mapped rows (${groupRows.length} product groups), total spend ${totalSpend.toFixed(2)} ${currency}`,
+      `Facebook Ads sync completed for ${syncDate} on ${adAccountId}: ${insightsData.length} ads, ${mappedRows.length} mapped rows (${groupRows.length} product groups), total spend ${totalSpend.toFixed(2)} ${currency}`,
     );
 
     return {
       sync_date: syncDate,
       ad_account_id: adAccountId,
-      fetched_ads_count: insights.length,
+      fetched_ads_count: insightsData.length,
       rows_persisted: payload.length,
       mapped_products_count: mappedRows.length,
       unmapped_spend: Number(unmappedSpend.toFixed(2)),
@@ -946,8 +976,8 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     adAccountId: string,
     filterIsActiveCampaign: boolean,
     accessToken: string,
-  ): Promise<FacebookAdInsight[]> {
-    const allRows: FacebookAdInsight[] = [];
+  ): Promise<FacebookInsightsLogData> {
+    const allRows: FacebookInsightsLogData = [];
     const graphNodeId = `act_${adAccountId}`;
     const graphBase = `https://graph.facebook.com/${GRAPH_API_VERSION}/${graphNodeId}/insights`;
     const appSecretProof = this.buildAppSecretProof(accessToken);
@@ -1013,21 +1043,56 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
           (page === 1 ? generateGraphUrl(nextUrl, params) : nextUrl),
       );
 
-      const response: AxiosResponse<FacebookInsightsResponse> =
-        await firstValueFrom(
-          this.httpService.get<FacebookInsightsResponse>(
-            nextUrl,
-            requestConfig,
-          ),
-        );
-      const body: FacebookInsightsResponse = response.data;
-      if (Array.isArray(body?.data)) {
-        allRows.push(...body.data);
-      }
+      try {
+        // Option: Use a union type if the body might be the success payload OR an error
+        const response: AxiosResponse<FacebookInsightsResponse | FacebookErrorResponse> =
+          await firstValueFrom(
+            this.httpService.get(nextUrl, requestConfig)
+          );
 
-      // if have next page, that will be include all params already
-      nextUrl = body?.paging?.next || null;
-      page += 1;
+        const body = response.data;
+
+        // 1. Check if the response body contains a Meta API error
+        if ('error' in body && body.error) {
+          const fbError = body.error;
+
+          const logMessage = `Facebook API Error [${fbError.code ?? 'unknown'}]: ${fbError.message ?? 'unknown'}`;
+          this.logger.error(logMessage);
+          allRows.push({
+            error: logMessage,
+          });
+
+          // Handle error accordingly (e.g., throw custom exception or return early)
+          nextUrl = null;
+
+          break;
+        }
+
+        // 2. Safe to process data
+        if ('data' in body && Array.isArray(body.data)) {
+          allRows.push(...(body.data as FacebookAdInsight[]));
+        }
+
+        // if have next page, that will be include all params already
+        nextUrl = ('paging' in body && body.paging?.next) || null;
+        page += 1;
+      } catch (err: unknown) {
+        // 3. Handle HTTP-level errors (4xx / 5xx) thrown by Axios
+        let logMessage = '';
+        if (err instanceof AxiosError && err.response?.data && 'error' in err.response.data) {
+          const fbError = (err.response.data as FacebookErrorResponse).error;
+          logMessage = `Facebook API Error [${fbError.code ?? 'unknown'}]: ${fbError.message ?? 'unknown'}`;
+        } else {
+          logMessage = `Unknown error: ${err}`;
+        }
+
+        this.logger.error(logMessage);
+        allRows.push({
+          error: logMessage,
+        });
+
+        nextUrl = null;
+      }
     }
 
     await this.upsertInsightsSnapshot(
@@ -1059,7 +1124,7 @@ export class FacebookAdsSyncService implements OnModuleInit, OnModuleDestroy {
     syncDate: string,
     adAccountId: string,
     requestParams: Record<string, unknown>,
-    response: FacebookAdInsight[],
+    response: FacebookInsightsLogData,
   ): Promise<void> {
     let row = await this.insightsSnapshotRepo.findOne({
       where: { sync_date: syncDate, ad_account_id: adAccountId },

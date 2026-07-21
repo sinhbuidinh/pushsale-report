@@ -779,6 +779,8 @@ npm ci --prefix apps/frontend    && npm run build --prefix apps/frontend
 sudo chown -R www-data:www-data /opt/sync-project
 sudo systemctl restart sync-backend
 sudo systemctl reload nginx
+sudo systemctl status sync-backend
+sudo systemctl status nginx
 
 journalctl -u sync-backend -n 80 --no-pager
 curl -I https://your-domain.com
